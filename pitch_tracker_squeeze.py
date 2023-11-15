@@ -14,7 +14,7 @@ import librosa
 import matplotlib.pyplot as plt
 
 
-def _f0_cwt(f0_interp):
+def f0_cwt(f0_interp, plot=False):
 
     
     f0_interp = (f0_interp-np.mean(f0_interp)) #/ np.std(f0_interp)
@@ -38,37 +38,26 @@ def _f0_cwt(f0_interp):
     reduced[3] = np.sum(scalogram[7*nv:9*nv], axis=0)
     reduced[4] = np.sum(scalogram[9*nv:], axis=0)
 
-    if DEBUG:
+    if plot:
         for i in range(0, 5):
             plt.plot(reduced[i]+i, color="black")
     
         plt.figure()
         plt.plot(np.sum(scalogram, axis=0), label="reco")
         plt.plot(np.sum(scalogram[2:], axis=0), label="reco_sm")
-
         plt.plot(f0_interp, label="orig")
         plt.legend()
         plt.show()
     return reduced
 
-def _cepstrum(spec, sr = 4000, minF0 = 50, maxF0 = 500):
-    from scipy.fftpack import irfft, rfft, ifft, fft
-    ceps =  abs(irfft(spec))
- 
-    ceps *= np.arange(ceps.shape[1]) ** -0.025
-    max_i = int(sr / minF0)
-    min_i = int(sr / maxF0)
 
-    max_indices = np.argmax(ceps[:, min_i:max_i], axis=1)+min_i
-    max_indices = scipy.signal.medfilt(max_indices, 3)
-    mag = ceps[np.arange(ceps.shape[0]), max_indices]
-  
-    f0 = sr/max_indices
-   
-    return f0.astype(int), mag
+def _hp_filter(sig, cutoff_frequency=60, order=2):
+    from scipy.signal import butter, filtfilt
+    b, a = butter(order, cutoff_frequency / (0.5 * 4000), btype='high', analog=False)
+    # Apply the filter to the signal
+    return filtfilt(b, a, sig)
 
 
-        
 def _smooth(params, win, type="HAMMING"):
     
     """
@@ -79,243 +68,237 @@ def _smooth(params, win, type="HAMMING"):
         win = len(params)-1
     if win % 2 == 0:
         win+=1
+
     s = np.r_[params[win-1:0:-1],params,params[-1:-win:-1]]
     w = np.hamming(win)
     y = np.convolve(w/w.sum(),s,mode='valid')
     return y[int(win/2):-int(win/2)]
 
-    
+
 def _interpolate_zeros(params, method='pchip', min_val = 0):
 
-
     voiced = np.array(params, float)
-    for i in range(0, len(voiced)):
-        if voiced[i] == min_val:
-            voiced[i] = np.nan
+    voiced[voiced==min_val] = np.nan
 
     if np.isnan(voiced[-1]):
         voiced[-1] = np.nanmin(voiced)
     if np.isnan(voiced[0]):
         voiced[0] = np.nanmean(voiced)
-
     not_nan = np.logical_not(np.isnan(voiced))
 
     indices = np.arange(len(voiced))
-    if method == 'spline':
-        interp = scipy.interpolate.UnivariateSpline(indices[not_nan],voiced[not_nan],k=2,s=0)
-        # return voiced parts intact
-        smoothed = interp(indices)
-        for i in range(0, len(smoothed)):
-            if not np.isnan(voiced[i]) :
-                smoothed[i] = params[i]
-        return smoothed
-    elif method =='pchip':
+    if method == 'pchip':
         interp = scipy.interpolate.pchip(indices[not_nan], voiced[not_nan])
+    elif method =='akima':
+        interp = scipy.interpolate.Akima1DInterpolator(indices[not_nan], voiced[not_nan])
     else:
         interp = scipy.interpolate.interp1d(indices[not_nan], voiced[not_nan], method)
+
     return interp(indices)
-
-
 
 
 def _hz_to_semitones(hz_values, base_freq=50):
     return 12 * np.log2(hz_values / base_freq)
 
-def _apply_target_rate(track, internal_rate, target_rate):
+def _apply_target_rate(pitch_track, old_frame_shift, new_frame_shift):
+    old_time_points = np.arange(0, len(pitch_track) * old_frame_shift, old_frame_shift)
+    new_time_points = np.arange(0, old_time_points[-1], new_frame_shift)
 
-    existing_time_intervals = np.arange(0, len(track) * 5, 1./internal_rate*1000)
-    new_time_intervals = np.arange(0, len(track) * 5, 1./target_rate*1000)
-    new_track = np.interp(new_time_intervals, existing_time_intervals, track)
-
-    return new_track
+    # Interpolate pitch values at the new time points
+    new_pitch_track = np.interp(new_time_points, old_time_points, pitch_track)
+    return new_pitch_track
 
 # if frame has energy at 1/2 or 1/3 of the max pitch candidate, move energy there
 def _stack_f0(spec, min_hz, max_hz):
-    
-    
     max_ind= np.argmax(spec[:, min_hz:max_hz], axis=1)+min_hz 
     for i in range(0, spec.shape[0]):
         cand = max_ind[i]
-
+        if cand > 3*min_hz and spec[i, int(cand/3.)] > spec[i, cand] * 0.1 and spec[i, int(cand/2.)] > spec[i, cand] *0.1 :
+            spec[i, int(cand/3.)]+=spec[i, cand]*5.
         if cand > 2*min_hz and spec[i, int(cand/2.)] > spec[i, cand] * 0.1:
             spec[i, int(cand/2.)]+=spec[i, cand]*5.
-            spec[i, cand-6:cand+6] = 0 
-    
-    spec =  scipy.ndimage.gaussian_filter(spec,[1,1])
     return spec
 
-
 def _construct_window(mean_hz):
-    from scipy.signal import gaussian
+    #from scipy.signalget_window # import gaussian
     mean_hz=int(mean_hz)
-    l_window = gaussian(mean_hz*2, std=mean_hz*0.2)
-    r_window = gaussian(mean_hz*4, std=mean_hz*0.75)
+    l_window = scipy.signal.windows.gaussian(mean_hz*2,mean_hz*0.3)
+    r_window = scipy.signal.windows.gaussian(mean_hz*4, mean_hz*0.75)
     window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
-
     return window
 
 def _add_slope(spec, min_hz=50, max_hz=500, steepness=1.):
     #increasing spectral slope, in order to make fundamental stand out more
-    
+    if min_hz<1:min_hz = 1
     spec[:, np.arange(min_hz, max_hz)] /=  np.arange(min_hz,max_hz) ** steepness
-    
     return spec
 
+def _get_max_track(spec, unvoiced_frames =[],min_hz=50, max_hz=500):
+    f0 = np.argmax(spec[:, min_hz:max_hz], axis=1)+min_hz 
+    f0[unvoiced_frames] = 0
+    return f0
 
-def inst_freq_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, cwt=False , DEBUG=False):
+
+# main function
+def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, plot=False):
     """
     extract f0 track from speech wav file using synchrosqueezed spectrogram and frequency domain autocorrelation
     """
-    print(os.path.splitext(os.path.basename(utt_wav))[0])
-
-    internal_rate = 200
-
     
     # some internal constants, could be user params also
-    SPEC_SLOPE = 1.5
-    ACORR_WEIGHT = 3.
-    VITERBI_PENALTY = 4
+    SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
+    INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
+    SPEC_SLOPE = 1.25    # adjusting slope steeper will emphasize lower harmonics
+    ACORR_WEIGHT = 3.    #
+    VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
+    MIN_VAL = 0.000001
+    PLT_MAX_HZ = max_hz  
+
+    # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
+    sig, fs = librosa.load(utt_wav, sr=SR)
+    sig = _hp_filter(sig, cutoff_frequency=70)
+    sig = (sig-np.mean(sig)) / np.std(sig) 
     
-    # read wav file, downsample to 4000Hz and normalize
-
-    sr = 4000.0
-    params, fs = librosa.load(utt_wav, sr=sr)
-    params = (params-np.mean(params)) / np.std(params) 
-    DEC = int(round(sr/internal_rate)) # decimation factor
-
-
-    #print("fft...")
-
-    ssq_fft ,fft2, *_ = ssq_stft(params, n_fft=int(sr),win_len=int(sr/4),hop_len=DEC)
+    # do ffts on the signal
+    frame_shift = int(round(SR/INTERNAL_RATE)) 
+    ssq_fft ,fft2, *_ = ssq_stft(sig, n_fft=int(SR),win_len=int(SR/4),hop_len=frame_shift)
     ssq_fft = abs(ssq_fft).T # personal preference for (time, hz) shape
-    pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,3])
 
-    
-    ### for voicing decision, use stft with shorter window
-    short_win_fft, *_= ssq_stft(params, n_fft=int(sr),win_len=int(sr/16),hop_len=DEC)
+     ### for voicing decision, use stft with shorter window                                                                                                                          
+    short_win_fft, *_= ssq_stft(sig, n_fft=int(SR),win_len=int(SR/16),hop_len=frame_shift)
     short_win_fft = abs(short_win_fft).T
-
     
-    #print("frequency domain autocorrelation...")
-    length = int(sr/2)
-    length = int(np.min([max_hz*3, 2000]))
-    acorr1 = librosa.autocorrelate(pic[:,:length], max_size=sr/4, axis=1)
-    # bias toward lower peaks
-    acorr1*=  np.linspace(1, -1., acorr1.shape[1])
+    if plot:
 
+        fig, ax = plt.subplots(6, 1, sharex=True, sharey=True)
+        plt.subplots_adjust(top = 1, bottom = 0, right = 1, left = 0, hspace = 0.1, wspace = 0)
+        energy2 = np.sum(short_win_fft[:,min_hz:max_hz], axis=1)
+        unvoiced_frames  =  energy2 < voicing_thresh
+        pic_fft = abs(fft2).T
+        ax[0].imshow(np.log(pic_fft[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
+        ax[0].plot(_get_max_track(pic_fft, unvoiced_frames), color="orange")
+        ax[0].set_title("fft", loc="left", x=0.02, y=0.7, color="white")
+
+    pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,2])
+    pic[pic<MIN_VAL] = MIN_VAL
+
+    if plot:
+        ax[1].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
+        ax[1].plot(_get_max_track(pic, unvoiced_frames), color="orange")    
+        ax[1].set_title("+synchro-squeezing", loc="left",x=0.02, y=0.7, color="white")
+    
+    
+    # frequency domain autocorrelation
+
+    length = int(SR/2)
+    acorr1 = librosa.autocorrelate(pic[:,:length], max_size=SR/2, axis=1)
+
+    # bias toward lower peaks
+    acorr1*=  np.linspace(2, 0, acorr1.shape[1])
+
+    # add strongest autocorrelation frequency to spec, helps with weak or missing fundamental
+    acorr_f0= np.argmax(acorr1[:, min_hz:max_hz], axis=1)+min_hz
+    acorr_f0 = scipy.signal.medfilt(acorr_f0, 3)
+    for i in range(-3,3):
+        pic[np.arange(pic.shape[0]), acorr_f0+i] += acorr1[np.arange(pic.shape[0]), acorr_f0+i]*ACORR_WEIGHT
+        
+    # multiply spec with the whole correlogram, mainly for denoising aperiodic sections
+    pic[:, :length] *=acorr1
+    
+    if plot:
+        ax[2].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
+        ax[2].plot(_get_max_track(pic, unvoiced_frames), color="orange")
+        ax[2].set_title("+freq autocorrelation", loc="left",x=0.02, y=0.7, color="white")
    
+    
     # voicing decision from autocorrelation and short window fft
     energy1 = np.sum(acorr1[:, min_hz:max_hz], axis=1)
     energy2 = np.sum(short_win_fft[:,min_hz:max_hz], axis=1)
     unvoiced_frames  = energy1 + energy2 < voicing_thresh
-    voiced_frames =  energy1 + energy2 >= voicing_thresh
+    # remove short sections
+    unvoiced_frames = scipy.signal.medfilt(unvoiced_frames.astype('int'), 11).astype('bool')
+    voiced_frames =  np.invert(unvoiced_frames)
 
-    # add strongest autocorrelation frequency, helps with weak or missing fundamental
-    acorr_f0= np.argmax(acorr1[:, min_hz:max_hz], axis=1)+min_hz
-    acorr_f0 = scipy.signal.medfilt(acorr_f0, 3)
-
-    for i in range(-3,3):
-        pic[np.arange(pic.shape[0]), acorr_f0+i] += acorr1[np.arange(pic.shape[0]), acorr_f0+i]*ACORR_WEIGHT
-
-    
-    # multiply spec with the whole correlogram, mainly for denoising aperiodic sections
-    acorr1 = scipy.ndimage.gaussian_filter(acorr1,[5,3])
-    pic[:, :int(sr/4)] *=acorr1
-          
-            
-    # reassign energy from h2 and h3 to f0
-    pic = _stack_f0(pic, min_hz, max_hz)
-    #pic = _stack_f0(pic, min_hz, max_hz)
-    
     # dampen higher frequencies to reduce octave jumps up
-    pic = _add_slope(pic, min_hz=min_hz, max_hz=max_hz, steepness=SPEC_SLOPE)
-    raw_f0 = np.argmax(pic[voiced_frames, min_hz:max_hz], axis=1)+min_hz
-    mean_pitch = np.median(raw_f0)
+    pic = _add_slope(pic, min_hz=0, max_hz=max_hz, steepness=SPEC_SLOPE)
+      
+    # reassign energy from h2 to h1
+    pic = _stack_f0(pic, min_hz, max_hz)
+    pic = _stack_f0(pic, min_hz, max_hz)
 
-    raw_f0 = np.argmax(pic[:, min_hz:max_hz], axis=1)+min_hz
-
-    plt.figure()
-    raw_f0[unvoiced_frames] = 0
-    plt.plot(raw_f0)
-
+    if plot:
+        ax[3].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
+        ax[3].plot(_get_max_track(pic, unvoiced_frames), color="orange")
+        ax[3].set_title("+skew spectrum + harmonic reassignment", loc="left",x=0.02, y=0.7, color="white")
 
 
     # softy constrain the hypothesis space by windowing around initial median estimate
-    window = _construct_window(mean_pitch)   
+    mean_pitch = np.median(np.argmax(pic[voiced_frames, min_hz:max_hz], axis=1))+min_hz
+    window = _construct_window(mean_pitch)
     pic[:, :len(window)]*=window
 
-    raw_f0 = np.argmax(pic[:, min_hz:max_hz], axis=1)+min_hz
+    if plot:
+        ax[4].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
+        ax[4].plot(_get_max_track(pic, unvoiced_frames), color="orange")
+        ax[4].set_title("+window around median pitch", loc="left",x=0.02, y=0.7, color="white")
 
-    raw_f0[unvoiced_frames] = 0
-    plt.plot(raw_f0, label="after window")
-    plt.legend()
-    plt.show()
-
-    #print("tracking")
-    # narrow search space
-    raw_f0 = np.argmax(pic[voiced_frames, min_hz:max_hz], axis=1)+min_hz
-
-    min_freq = np.min(raw_f0)
-    max_freq = np.max(raw_f0)
+    
+    # narrow search space between observed min and max
+    raw_f0 = np.argmax(pic[voiced_frames, min_hz:max_hz], axis=1)+min_hz 
+    min_freq,max_freq = np.min(raw_f0), np.max(raw_f0)
     scales = np.arange(min_freq, max_freq, 1)
     scales = _hz_to_semitones(scales, min_freq)
+
     # viterbi search for the best path
-
     track = extract_ridges(pic[:,min_freq:max_freq].T,scales, penalty=VITERBI_PENALTY, n_ridges=1, transform="fft")  
-    track = np.array(track).astype('float').flatten()+min_freq #.flatten()+min_hz
-
-
-    # fill unvoiced gaps and postprocess
+    track = np.array(track).astype('float').flatten()+min_freq
     track[unvoiced_frames] = 0
-    raw_f0 = np.array(track)
 
-    # process a bit to get smoother interpolation 
-    uv_track = scipy.signal.medfilt(track,9)
-    uv_track = _interpolate_zeros(uv_track, method='pchip')
-    uv_track = _smooth(uv_track,5)
     
+    if plot:
+        ax[5].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
+        ax[5].plot(track, color="orange")
+        ax[5].set_title("+viterbi", loc="left",x=0.02, y=0.7, color="white")
+        #y, sr = librosa.load(f, sr=16000)
+        #f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/INTERNAL_RATE))
+        #ax[5].plot(f0_pyin, color="red")
+        plt.show()
+
+    # fill unvoiced gaps and postprocess 
+    interp_track = scipy.signal.medfilt(track, 9)
+    interp_track = _interpolate_zeros(interp_track, method='akima')
+   
     # combine interpolated unvoiced regions and unsmoothed voiced regions and smooth again
-    #track = scipy.ndimage.generic_filter(track, np.nanmedian, 3) #medfilt(track,3)
-    track[unvoiced_frames] = uv_track[unvoiced_frames]
-    track = scipy.signal.medfilt(track,5)   
-    track = _smooth(track,3)
+    interp_track[voiced_frames] = track[voiced_frames]
+    interp_track = scipy.signal.medfilt(interp_track, 5)
+    interp_track = _smooth(interp_track, 5)
 
     # convert to target frame rate 
-    if target_rate != internal_rate:
-        track = _apply_target_rate(track, internal_rate, target_rate)
-        unvoiced_frames = _apply_target_rate(unvoiced_frames, internal_rate, target_rate).astype('bool')
-        track = scipy.signal.medfilt(track,1)
+    if target_rate != INTERNAL_RATE:
+        track = _apply_target_rate(track, INTERNAL_RATE, target_rate)
+        interp_track = _apply_target_rate(interp_track, INTERNAL_RATE, target_rate)
+        unvoiced_frames = _apply_target_rate(unvoiced_frames.astype('int'), INTERNAL_RATE, target_rate).astype('bool')
+        track[unvoiced_frames] = 0 # if the iterpolation has smoothed track
    
-    interpolated_track = np.array(track)
-    if cwt:
-        cwt = _f0_cwt(np.log(interpolated_track))
-
-    if DEBUG or 1==1:
-        plt.plot(interpolated_track)
-
-        plt.plot(raw_f0)
-        pic[:,:min_hz] = 0
-        plt.imshow(np.log(pic[:, :max_hz]).T, aspect="auto", origin="lower")
+    if plot:
+        plt.plot(interp_track)
+        plt.plot(track)
         plt.show()
-    if cwt:
-        return (interpolated_track, unvoiced_frames, cwt)
-    return (interpolated_track,unvoiced_frames)
+
+    return (track, interp_track)
+
 
 
 def extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, output_directory=None, output_format="txt"):
-    f0_track, unvoiced_frames = inst_freq_pitch(utt_wav, min_hz, max_hz, voicing_thresh, target_rate)
-    f0_track_voiced = np.array(f0_track)
-    f0_track_voiced[unvoiced_frames] = 0
-    
+    f0_track, f0_track_interp = track_pitch(utt_wav, min_hz, max_hz, voicing_thresh, target_rate)
     
     if output_directory:
         out_name = output_directory+"/"+os.path.splitext(os.path.basename(utt_wav))[0]
     else:
         out_name = os.path.splitext(utt_wav)[0]
-        print("this output", out_name)
     if output_format == "txt":
-        np.savetxt(out_name+".interp.txt", f0_track, fmt='%f')    
-        np.savetxt(out_name+".f0.txt", f0_track_voiced, fmt='%f')
+        np.savetxt(out_name+".interp.txt", f0_track_interp, fmt='%f')    
+        np.savetxt(out_name+".f0.txt", f0_track, fmt='%f')
     elif output_format == "pt":
         torch.save(torch.from_numpy(f0_track), out_name+".interp.pt")
         torch.save(torch.from_numpy(f0_track_voiced), out_name+".f0.pt")
@@ -332,13 +315,14 @@ if __name__ == "__main__":
                         help="minimum f0 value of the data, around 50-80 for males, 100 -150 for females")
     parser.add_argument("-M", "--max_hz", default=500, type=int,
                         help="maximum f0 value of the data, around 200-300 for males, 300-500 for females")
-    parser.add_argument("-t", "--voicing_thresh", default=0.3, type=float,
+    parser.add_argument("-t", "--voicing_thresh", default=0.2, type=float,
                         help="maximum f0 value of the data, around 200-300 for males, 300-500 for females")
     parser.add_argument("-r", "--frame_rate", default=86.1326, type=float,
                         help="number of f0 values per second, (for fastpitch 22050hz, this is 86.1326 (256 samples)")                 
     parser.add_argument("-j", "--nb_jobs", default=8, type=int,
                         help="Define the number of jobs to run in parallel")
-    
+    parser.add_argument("-p", "--plot", action="store_true",
+                        help="plot the stages of pitch of the algorithm")
     parser.add_argument("-f", "--output_format", default="txt", choices=["txt", "pt", "npy"])
     parser.add_argument("-o", "--output_directory", default=None, type=str,
                         help="The output directory. If not specified, the tool will output the result in a .f0 and .f0.interp file in the same directory as the wave files")
@@ -359,12 +343,17 @@ if __name__ == "__main__":
             
     input_files = sorted(glob.glob(args.input + "/*.wav"))
     
-    # test
-    #"""
-    for f in input_files:
-        inst_freq_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, DEBUG=True)
-        
-    #"""
+    import random
+    random.shuffle(input_files)
+
+ 
+    if args.plot:
+        for f in input_files:
+            #os.system("afplay "+f+ "&")
+            track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
+            continue
+        sys.exit(0)
+  
     Parallel(n_jobs=args.nb_jobs)(delayed(extract_to_file)(f, 
             args.min_hz, 
             args.max_hz, 
