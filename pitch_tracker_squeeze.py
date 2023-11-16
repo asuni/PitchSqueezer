@@ -86,6 +86,7 @@ def _interpolate_zeros(params, method='pchip', min_val = 0):
         voiced[0] = np.nanmean(voiced)
         
     # add helping points in long gaps
+    nan_indices = np.isnan(voiced)
     st_i = np.where(~nan_indices[:-1] & nan_indices[1:])[0] + 1
     end_i = np.where(nan_indices[:-1] & ~nan_indices[1:])[0] + 1
 
