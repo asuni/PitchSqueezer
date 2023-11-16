@@ -28,7 +28,7 @@ def f0_cwt(f0_interp, plot=False):
 
     scales = make_scales(nv=nv, min_scale=min_scale, max_scale=max_scale, scaletype='log', wavelet=wavelet, N=n)
     scalogram, scales, *_ = cwt(f0_padded, wavelet=wavelet, fs=100, scales=scales)
-
+    scalogram = np.real(scalogram)
     scalogram*=2.2/nv # empirical correction for reconstruction
     scalogram = scalogram[:,len(f0_interp):-len(f0_interp)]
     reduced = np.zeros((5, scalogram.shape[1]))
@@ -39,16 +39,13 @@ def f0_cwt(f0_interp, plot=False):
     reduced[4] = np.sum(scalogram[9*nv:], axis=0)
 
     if plot:
+        plt.plot(f0_interp, label="original")
+        plt.plot(np.sum(scalogram, axis=0), label="reconstructed")
         for i in range(0, 5):
-            plt.plot(reduced[i]+i, color="black")
-    
-        plt.figure()
-        plt.plot(np.sum(scalogram, axis=0), label="reco")
-        plt.plot(np.sum(scalogram[2:], axis=0), label="reco_sm")
-        plt.plot(f0_interp, label="orig")
+            plt.plot(reduced[i]+i*0.5+0.5, color="black")
         plt.legend()
         plt.show()
-    return reduced
+    return reduced.T
 
 
 def _hp_filter(sig, cutoff_frequency=60, order=4):
@@ -187,7 +184,6 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     short_win_fft = abs(short_win_fft).T
     
     if plot:
-
         fig, ax = plt.subplots(6, 1, sharex=True, sharey=True)
         plt.subplots_adjust(top = 1, bottom = 0, right = 1, left = 0, hspace = 0.1, wspace = 0)
         energy2 = np.sum(short_win_fft[:,min_hz:max_hz], axis=1)
@@ -307,20 +303,26 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
 
 
 
-def extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, output_directory=None, output_format="txt"):
-    f0_track, f0_track_interp = track_pitch(utt_wav, min_hz, max_hz, voicing_thresh, target_rate)
-    
+def extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, output_directory=None, wavelet=False, output_format="txt"):
+    f0, if0 = track_pitch(utt_wav, min_hz, max_hz, voicing_thresh, target_rate)
+    if wavelet:
+         cwt_mat = f0_cwt(np.log(if0))
     if output_directory:
         out_name = output_directory+"/"+os.path.splitext(os.path.basename(utt_wav))[0]
     else:
         out_name = os.path.splitext(utt_wav)[0]
     if output_format == "txt":
-        np.savetxt(out_name+".interp.txt", f0_track_interp, fmt='%f')    
-        np.savetxt(out_name+".f0.txt", f0_track, fmt='%f')
+        np.savetxt(out_name+".interp.txt", if0, fmt='%f')    
+        np.savetxt(out_name+".f0.txt", f0, fmt='%f')
+        if wavelet:
+            np.savetxt(out_name+".cwt.txt", cwt_mat, fmt='%f')
+            
     elif output_format == "pt":
-        torch.save(torch.from_numpy(f0_track), out_name+".interp.pt")
-        torch.save(torch.from_numpy(f0_track_voiced), out_name+".f0.pt")
-
+        torch.save(torch.from_numpy(if0), out_name+".interp.pt")
+        torch.save(torch.from_numpy(f0), out_name+".f0.pt")
+        if wavelet:
+            torch.save(torch.from_numpy(cwt_mat),out_name+".cwt.txt")
+            
 
 if __name__ == "__main__":
     import argparse, glob
@@ -339,6 +341,8 @@ if __name__ == "__main__":
                         help="number of f0 values per second, (for fastpitch 22050hz, this is 86.1326 (256 samples)")                 
     parser.add_argument("-j", "--nb_jobs", default=8, type=int,
                         help="Define the number of jobs to run in parallel")
+    parser.add_argument("-w", "--wavelet", action="store_true",
+                        help="Extract 5-scale continuous wavelet decomposition of f0")
     parser.add_argument("-p", "--plot", action="store_true",
                         help="plot the stages of pitch of the algorithm")
     parser.add_argument("-f", "--output_format", default="txt", choices=["txt", "pt", "npy"])
@@ -347,10 +351,10 @@ if __name__ == "__main__":
     
     
     # Add arguments
-    parser.add_argument("input", help="directory with wave files")
+    parser.add_argument("input", help="file or directory with audio files (.wav)")
     
     args = parser.parse_args()
-    
+
     if args.output_format == "pt":
         try:
             import torch
@@ -363,24 +367,28 @@ if __name__ == "__main__":
             os.mkdir(args.output_directory)
         except:
             pass
-            
-    input_files = sorted(glob.glob(args.input + "/*.wav"))
     
-    import random
-    #random.shuffle(input_files)
-
- 
+    if str.lower(args.input).endswith(".wav"):
+        input_files = [args.input]
+    else:
+        input_files = sorted(glob.glob(args.input + "/*.wav"))
+    
+    
     if args.plot:
         for f in input_files:
             os.system("play "+f+ "&")
-            track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
+            f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
+            if args.wavelet:
+                f0_cwt(np.log(if0), plot=True)
             continue
         sys.exit(0)
-  
+
+    
     Parallel(n_jobs=args.nb_jobs)(delayed(extract_to_file)(f, 
             args.min_hz, 
             args.max_hz, 
             args.voicing_thresh,
             args.frame_rate,
-            args.output_directory, 
+            args.output_directory,
+            args.wavelet,
             args.output_format) for f in tqdm(input_files))
