@@ -51,7 +51,7 @@ def f0_cwt(f0_interp, plot=False):
     return reduced
 
 
-def _hp_filter(sig, cutoff_frequency=60, order=2):
+def _hp_filter(sig, cutoff_frequency=60, order=4):
     from scipy.signal import butter, filtfilt
     b, a = butter(order, cutoff_frequency / (0.5 * 4000), btype='high', analog=False)
     # Apply the filter to the signal
@@ -84,6 +84,19 @@ def _interpolate_zeros(params, method='pchip', min_val = 0):
         voiced[-1] = np.nanmin(voiced)
     if np.isnan(voiced[0]):
         voiced[0] = np.nanmean(voiced)
+        
+    # add helping points in long gaps
+    st_i = np.where(~nan_indices[:-1] & nan_indices[1:])[0] + 1
+    end_i = np.where(nan_indices[:-1] & ~nan_indices[1:])[0] + 1
+
+  
+    for i in range(0, len(end_i)):
+        gap_len = end_i[i]-st_i[i]
+        if gap_len > 20:
+            #center = st_i[i] + int((end_i[i] - st_i[i])/1.5)
+            center = end_i[i] - 20
+            voiced[center] = np.min([voiced[st_i[i]-1], voiced[end_i[i]]])-int(np.sqrt(gap_len))
+            
     not_nan = np.logical_not(np.isnan(voiced))
 
     indices = np.arange(len(voiced))
@@ -126,8 +139,8 @@ def _stack_f0(spec, min_hz, max_hz):
 def _construct_window(mean_hz):
     #from scipy.signalget_window # import gaussian
     mean_hz=int(mean_hz)
-    l_window = scipy.signal.windows.gaussian(mean_hz*2,mean_hz*0.3)
-    r_window = scipy.signal.windows.gaussian(mean_hz*4, mean_hz*0.75)
+    l_window = scipy.signal.windows.gaussian(mean_hz*2,mean_hz*0.6)
+    r_window = scipy.signal.windows.gaussian(mean_hz*4, mean_hz*0.6)
     window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
     return window
 
@@ -152,15 +165,15 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     # some internal constants, could be user params also
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
-    SPEC_SLOPE = 1.25    # adjusting slope steeper will emphasize lower harmonics
-    ACORR_WEIGHT = 3.    #
+    SPEC_SLOPE = 1.5    # adjusting slope steeper will emphasize lower harmonics
+    ACORR_WEIGHT = 4.    #
     VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 0.000001
     PLT_MAX_HZ = max_hz  
 
     # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
     sig, fs = librosa.load(utt_wav, sr=SR)
-    sig = _hp_filter(sig, cutoff_frequency=70)
+    sig = _hp_filter(sig, cutoff_frequency=80)
     sig = (sig-np.mean(sig)) / np.std(sig) 
     
     # do ffts on the signal
@@ -261,11 +274,11 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     
     if plot:
         ax[5].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
-        ax[5].plot(track, color="orange")
+        ax[5].plot(track, color="orange", linestyle="dotted")
         ax[5].set_title("+viterbi", loc="left",x=0.02, y=0.7, color="white")
-        #y, sr = librosa.load(f, sr=16000)
+        y, sr = librosa.load(f, sr=16000)
         #f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/INTERNAL_RATE))
-        #ax[5].plot(f0_pyin, color="red")
+        #ax[5].plot(f0_pyin, color="red", linestyle="dotted")
         plt.show()
 
     # fill unvoiced gaps and postprocess 
@@ -353,12 +366,12 @@ if __name__ == "__main__":
     input_files = sorted(glob.glob(args.input + "/*.wav"))
     
     import random
-    random.shuffle(input_files)
+    #random.shuffle(input_files)
 
  
     if args.plot:
         for f in input_files:
-            #os.system("afplay "+f+ "&")
+            os.system("play "+f+ "&")
             track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
             continue
         sys.exit(0)
