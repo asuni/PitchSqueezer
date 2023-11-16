@@ -100,7 +100,9 @@ def _interpolate_zeros(params, method='pchip', min_val = 0):
 def _hz_to_semitones(hz_values, base_freq=50):
     return 12 * np.log2(hz_values / base_freq)
 
-def _apply_target_rate(pitch_track, old_frame_shift, new_frame_shift):
+def _apply_target_rate(pitch_track, old_frame_rate, new_frame_rate):
+    old_frame_shift = 1./old_frame_rate
+    new_frame_shift = 1./new_frame_rate
     old_time_points = np.arange(0, len(pitch_track) * old_frame_shift, old_frame_shift)
     new_time_points = np.arange(0, old_time_points[-1], new_frame_shift)
 
