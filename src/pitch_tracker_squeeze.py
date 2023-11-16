@@ -89,12 +89,14 @@ def _interpolate_zeros(params, method='pchip', min_val = 0):
 
   
     for i in range(0, len(end_i)):
+        print(voiced[end_i[i]])
+        voiced[st_i[i]+1] = voiced[st_i[i]-1]-1 # constrains akima
+        voiced[end_i[i]-1] = voiced[end_i[i]]-1 # constrains akima
         gap_len = end_i[i]-st_i[i]
-        if gap_len > 30:
+        if gap_len > 40:
             gap_min = np.min([voiced[st_i[i]-1], voiced[end_i[i]]])
-            center = end_i[i] - 20
-            voiced[center] = gap_min - int(np.sqrt(gap_len))
-
+            voiced[end_i[i]-30] = gap_min - int(np.sqrt(gap_len))
+       
     not_nan = np.logical_not(np.isnan(voiced))
 
     indices = np.arange(len(voiced))
@@ -163,7 +165,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     # some internal constants, could be user params also
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
-    SPEC_SLOPE = 1.5    # adjusting slope steeper will emphasize lower harmonics
+    SPEC_SLOPE = 1.5     # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 4.    #
     VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 0.000001
@@ -273,7 +275,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         ax[5].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
         ax[5].plot(track, color="orange", linestyle="dotted")
         ax[5].set_title("+viterbi", loc="left",x=0.02, y=0.7, color="white")
-        y, sr = librosa.load(f, sr=16000)
+        #y, sr = librosa.load(utt_wav, sr=16000)
         #f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/INTERNAL_RATE))
         #ax[5].plot(f0_pyin, color="red", linestyle="dotted")
         plt.show()
@@ -324,11 +326,14 @@ def extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_ra
             torch.save(torch.from_numpy(cwt_mat),out_name+".cwt.txt")
             
 
-if __name__ == "__main__":
+def main():
+
     import argparse, glob
     from joblib import Parallel, delayed
     from tqdm import tqdm
-    parser = argparse.ArgumentParser(description="Command line application to analyze prosody using wavelets.")
+    parser = argparse.ArgumentParser(
+        description="Command line tool for tracking pitch in speech files",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     # Add options
     parser.add_argument("-m", "--min_hz", default=60, type=int,
@@ -337,21 +342,22 @@ if __name__ == "__main__":
                         help="maximum f0 value of the data, around 200-300 for males, 300-500 for females")
     parser.add_argument("-t", "--voicing_thresh", default=0.2, type=float,
                         help="maximum f0 value of the data, around 200-300 for males, 300-500 for females")
-    parser.add_argument("-r", "--frame_rate", default=86.1326, type=float,
-                        help="number of f0 values per second, (for fastpitch 22050hz, this is 86.1326 (256 samples)")                 
-    parser.add_argument("-j", "--nb_jobs", default=8, type=int,
+    parser.add_argument("-r", "--frame_rate", default=100.0, type=float,
+                        help="number of f0 values per second, (for many TTSs such as fastpitch 22050hz, this is 86.1326 (256 samples)")                 
+    parser.add_argument("-j", "--nb_jobs", default=4, type=int,
                         help="Define the number of jobs to run in parallel")
     parser.add_argument("-w", "--wavelet", action="store_true",
                         help="Extract 5-scale continuous wavelet decomposition of f0")
     parser.add_argument("-p", "--plot", action="store_true",
                         help="plot the stages of pitch of the algorithm")
-    parser.add_argument("-f", "--output_format", default="txt", choices=["txt", "pt", "npy"])
+    parser.add_argument("-f", "--output_format", default="txt", choices=["txt", "pt", "npy"], 
+                        help="text file, pytorch tensor, numpy array" )
     parser.add_argument("-o", "--output_directory", default=None, type=str,
-                        help="The output directory. If not specified, the tool will output the result in a .f0 and .f0.interp file in the same directory as the wave files")
+                        help="The output directory. If not specified, input directory will be used.")
     
     
     # Add arguments
-    parser.add_argument("input", help="file or directory with audio files (.wav)")
+    parser.add_argument("input", help="file or directory with audio files (.wav) to analyze")
     
     args = parser.parse_args()
 
@@ -392,3 +398,6 @@ if __name__ == "__main__":
             args.output_directory,
             args.wavelet,
             args.output_format) for f in tqdm(input_files))
+
+if __name__ == "__main__":
+    sys.exit(main())
