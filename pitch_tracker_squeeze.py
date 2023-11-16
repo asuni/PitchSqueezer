@@ -104,6 +104,8 @@ def _apply_target_rate(pitch_track, old_frame_rate, new_frame_rate):
     old_frame_shift = 1./old_frame_rate
     new_frame_shift = 1./new_frame_rate
     old_time_points = np.arange(0, len(pitch_track) * old_frame_shift, old_frame_shift)
+    old_time_points = old_time_points[:len(pitch_track)] # to avoid rounding errors
+    new_time_points = np.arange(0, old_time_points[-1], new_frame_shift)
     new_time_points = np.arange(0, old_time_points[-1], new_frame_shift)
 
     # Interpolate pitch values at the new time points
@@ -334,8 +336,13 @@ if __name__ == "__main__":
     parser.add_argument("input", help="directory with wave files")
     
     args = parser.parse_args()
+    
     if args.output_format == "pt":
-        import torch
+        try:
+            import torch
+        except:
+            print("to export torch tensors, you need to have torch installed. (pip install torch)")
+            sys.exit(0)
     
     if args.output_directory:
         try:
