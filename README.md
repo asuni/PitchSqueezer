@@ -16,6 +16,8 @@ Not so great:
 * robustness to noise is questionable
 * all these assesments are impressionistic
 
-Visualization of the method:
+Visualization of the method: <img src="images/Figure_1.png">
 
-<img src="images/Figure_1.png">
+
+
+Totally representative comparison with librosa.pyin on creaky female voice: <img src="images/squeezer_vs_pyin.png">
