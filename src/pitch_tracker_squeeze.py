@@ -165,7 +165,6 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 0.000001
     PLT_MAX_HZ = max_hz  
-    INTERNAL_RATE = 100
     orig_sr = librosa.get_samplerate(utt_wav)
 
     # get integer ratio between original and internal sample rate to avoid rounding problems
