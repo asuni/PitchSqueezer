@@ -15,6 +15,7 @@ Not so great:
 * voicing decision is simplistic
 * robustness to noise is questionable
 * all these assesments are impressionistic
+* yes, I am only vaguely aware of the difference between pitch and f0
 
 Visualization of the method: <img src="images/Figure_1.png">
 
