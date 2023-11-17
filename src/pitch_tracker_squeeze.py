@@ -160,7 +160,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     # some internal constants, could be user params also
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
-    SPEC_SLOPE = 1.25     # adjusting slope steeper will emphasize lower harmonics
+    SPEC_SLOPE = 1.5     # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 3.    #
     VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-20
@@ -273,7 +273,6 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     track = extract_ridges(pic[:,min_freq:max_freq].T,scales, penalty=VITERBI_PENALTY, n_ridges=1, transform="fft")  
     track = np.array(track).astype('float').flatten()+min_freq
     track[unvoiced_frames] = 0
-
     
     if plot:
         ax[5].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
@@ -282,6 +281,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         plt.show()
 
     # fill unvoiced gaps and postprocess 
+   
     interp_track = scipy.signal.medfilt(track, 9)
     interp_track = _interpolate_zeros(interp_track, method='akima')
    
@@ -301,16 +301,18 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         track[unvoiced_frames] = 0 # if the iterpolation has smoothed track
    
     if plot:
-        plt.plot(interp_track, linestyle="dotted", color="white", alpha=0.3)
-        plt.plot(track, linestyle="dotted", color="white", label="squeezer")
-        y, sr = librosa.load(utt_wav)
-        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
-        plt.plot(f0_pyin, color="red", linestyle="dotted", label="pyin")
         if target_rate == INTERNAL_RATE:
             plt.imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
-        print(len(f0_pyin), len(track))
-        plt.legend()
-        plt.show()
+       
+            plt.plot(interp_track, linestyle="dotted", color="white", alpha=0.3)
+            plt.plot(track, linestyle="dotted", color="white", label="squeezer")
+            y, sr = librosa.load(utt_wav)
+            f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
+            plt.plot(f0_pyin, color="red", linestyle="dotted", label="pyin")
+        
+            print(len(f0_pyin), len(track))
+            plt.legend()
+            plt.show()
 
     return (track, interp_track)
 
