@@ -114,10 +114,9 @@ def _hz_to_semitones(hz_values, base_freq=50):
     return 12 * np.log2(hz_values / base_freq)
 
 
-def _apply_target_rate(pitch_track, old_frame_rate, new_frame_rate):
-    ratio = new_frame_rate / old_frame_rate
+def _apply_target_rate(pitch_track, old_frame_rate, n_target_points):
     old_time_points = np.linspace(0, len(pitch_track) / old_frame_rate, num=len(pitch_track))
-    new_time_points = np.linspace(0, old_time_points[-1], num=round(len(pitch_track)*ratio))
+    new_time_points = np.linspace(0, old_time_points[-1], num=n_target_points)
     new_pitch_track = np.interp(new_time_points, old_time_points, pitch_track)
     return new_pitch_track
 
@@ -166,12 +165,14 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 0.000001
     PLT_MAX_HZ = max_hz  
-
+    INTERNAL_RATE = 100
     orig_sr = librosa.get_samplerate(utt_wav)
+
     # get integer ratio between original and internal sample rate to avoid rounding problems
     if orig_sr in [11025, 22050, 44100]:
         SR = 4410
-    # read wav file, 
+
+   
     # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
     sig, fs = librosa.load(utt_wav, sr=SR)
     sig = _hp_filter(sig, cutoff_frequency=80)
@@ -179,19 +180,21 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     
     # do ffts on the signal
     frame_shift = int(round(SR/INTERNAL_RATE)) 
-    ssq_fft ,fft2, *_ = ssq_stft(sig, n_fft=int(SR),win_len=int(SR/4),hop_len=frame_shift)
+    ssq_fft ,fft2, *_ = ssq_stft(sig ,n_fft = int(SR), win_len=int(SR/4),hop_len=frame_shift)
+ 
     ssq_fft = abs(ssq_fft).T # personal preference for (time, hz) shape
    
      ### for voicing decision, use stft with shorter window                                                                                                                          
     short_win_fft, *_= ssq_stft(sig, n_fft=int(SR),win_len=int(SR/16),hop_len=frame_shift)
     short_win_fft = abs(short_win_fft).T
-    
+   
     if plot:
         fig, ax = plt.subplots(6, 1, sharex=True, sharey=True)
         plt.subplots_adjust(top = 1, bottom = 0, right = 1, left = 0, hspace = 0.1, wspace = 0)
         energy2 = np.sum(short_win_fft[:,min_hz:max_hz], axis=1)
-        unvoiced_frames  =  energy2 < voicing_thresh
+        unvoiced_frames = energy2 < voicing_thresh
         pic_fft = abs(fft2).T
+      
         ax[0].imshow(np.log(pic_fft[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
         ax[0].plot(_get_max_track(pic_fft, unvoiced_frames), color="orange")
         ax[0].set_title("fft", loc="left", x=0.02, y=0.7, color="white")
@@ -211,10 +214,10 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     acorr1 = librosa.autocorrelate(pic[:,:length], max_size=SR/2, axis=1)
 
     # bias toward lower peaks
-    acorr1*=  np.linspace(2, 0, acorr1.shape[1])
+    acorr1 *= np.linspace(2, 0, acorr1.shape[1])
 
     # add strongest autocorrelation frequency to spec, helps with weak or missing fundamental
-    acorr_f0= np.argmax(acorr1[:, min_hz:max_hz], axis=1)+min_hz
+    acorr_f0 = np.argmax(acorr1[:, min_hz:max_hz], axis=1)+min_hz
     acorr_f0 = scipy.signal.medfilt(acorr_f0, 3)
     for i in range(-3,3):
         pic[np.arange(pic.shape[0]), acorr_f0+i] += acorr1[np.arange(pic.shape[0]), acorr_f0+i]*ACORR_WEIGHT
@@ -276,9 +279,6 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         ax[5].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
         ax[5].plot(track, color="orange", linestyle="dotted")
         ax[5].set_title("+viterbi", loc="left",x=0.02, y=0.7, color="white")
-        #y, sr = librosa.load(utt_wav, sr=16000)
-        #f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/INTERNAL_RATE))
-        #ax[5].plot(f0_pyin, color="red", linestyle="dotted")
         plt.show()
 
     # fill unvoiced gaps and postprocess 
@@ -292,14 +292,21 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
 
     # convert to target frame rate 
     if target_rate != INTERNAL_RATE:
-        track = _apply_target_rate(track, INTERNAL_RATE, target_rate)
-        interp_track = _apply_target_rate(interp_track, INTERNAL_RATE, target_rate)
-        unvoiced_frames = _apply_target_rate(unvoiced_frames.astype('int'), INTERNAL_RATE, target_rate).astype('bool')
+       
+        # for compatibility with librosa pyin and pytorch stft
+        n_target_frames = np.ceil(len(sig)*(orig_sr/SR) / round(orig_sr/target_rate)).astype('int')
+        track = _apply_target_rate(track, INTERNAL_RATE, n_target_frames)
+        interp_track = _apply_target_rate(interp_track, INTERNAL_RATE, n_target_frames)
+        unvoiced_frames = _apply_target_rate(unvoiced_frames.astype('int'), INTERNAL_RATE, n_target_frames).astype('bool')
         track[unvoiced_frames] = 0 # if the iterpolation has smoothed track
    
     if plot:
         plt.plot(interp_track)
         plt.plot(track)
+        y, sr = librosa.load(utt_wav)
+        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, frame_length = 1024) #hop_length = round(sr/target_rate))
+        plt.plot(f0_pyin, color="red", linestyle="dotted")
+        print(len(f0_pyin), len(track))
         plt.show()
 
     return (track, interp_track)
@@ -362,6 +369,21 @@ def main():
     
     args = parser.parse_args()
 
+     
+    if str.lower(args.input).endswith(".wav"):
+        input_files = [args.input]
+    else:
+        input_files = sorted(glob.glob(args.input + "/*.wav"))
+
+    if args.plot:
+        for f in input_files:
+            os.system("play -q "+f+ "&")
+            f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
+            if args.wavelet:
+                f0_cwt(np.log(if0), plot=True)
+            continue
+        return
+
     if args.output_format == "pt":
         try:
             import torch
@@ -374,22 +396,6 @@ def main():
             os.mkdir(args.output_directory)
         except:
             pass
-    
-    if str.lower(args.input).endswith(".wav"):
-        input_files = [args.input]
-    else:
-        input_files = sorted(glob.glob(args.input + "/*.wav"))
-    
-    
-    if args.plot:
-        for f in input_files:
-            os.system("play -q "+f+ "&")
-            f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
-            if args.wavelet:
-                f0_cwt(np.log(if0), plot=True)
-            continue
-        sys.exit(0)
-
     
     Parallel(n_jobs=args.nb_jobs)(delayed(extract_to_file)(f, 
             args.min_hz, 
