@@ -48,7 +48,7 @@ def f0_cwt(f0_interp, plot=False):
     return reduced.T
 
 
-def _hp_filter(sig, cutoff_frequency=60, order=4):
+def _hp_filter(sig, cutoff_frequency=60, order=2):
     from scipy.signal import butter, filtfilt
     b, a = butter(order, cutoff_frequency / (0.5 * 4000), btype='high', analog=False)
     # Apply the filter to the signal
@@ -135,7 +135,7 @@ def _construct_window(mean_hz):
     #from scipy.signalget_window # import gaussian
     mean_hz=int(mean_hz)
     l_window = scipy.signal.windows.gaussian(mean_hz*2,mean_hz*0.6)
-    r_window = scipy.signal.windows.gaussian(mean_hz*4, mean_hz*0.6)
+    r_window = scipy.signal.windows.gaussian(mean_hz*4, mean_hz*2.)
     window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
     return window
 
@@ -175,7 +175,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
    
     # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
     sig, fs = librosa.load(utt_wav, sr=SR)
-    sig = _hp_filter(sig, cutoff_frequency=80)
+    sig = _hp_filter(sig, cutoff_frequency=70)
     sig = (sig-np.mean(sig)) / np.std(sig) 
     
     # do ffts on the signal
@@ -199,7 +199,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         ax[0].plot(_get_max_track(pic_fft, unvoiced_frames), color="orange")
         ax[0].set_title("fft", loc="left", x=0.02, y=0.7, color="white")
 
-    pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,2])
+    pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,1])
     pic[pic<MIN_VAL] = MIN_VAL
 
     if plot:
