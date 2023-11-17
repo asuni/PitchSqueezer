@@ -15,7 +15,20 @@ import matplotlib.pyplot as plt
 
 
 def f0_cwt(f0_interp, plot=False):
+    """
+    Decomposes continuous f0 track to 5 scales using continuous wavelet transform, with mexican hat mother wavelet
 
+    Args:
+        f0_interp (np.array):  an array containing log(f0) values
+        plot (bool):    visualize the wavelet transform
+       
+    Returns:
+        - scalogram (np.array with shape(len(f0_interp),5)): five scales corresponding roughly to phone, 
+        syllable, word, phrase and utterance level movement of pitch. 
+        np.sum(scalogram, axis=0) produces the original pitch track with mean valuesubtracted.
+
+ 
+    """
     
     f0_interp = (f0_interp-np.mean(f0_interp)) #/ np.std(f0_interp)
     f0_padded = np.concatenate([f0_interp,f0_interp, f0_interp])
@@ -45,6 +58,7 @@ def f0_cwt(f0_interp, plot=False):
             plt.plot(reduced[i]+i*0.5+0.5, color="black")
         plt.legend()
         plt.show()
+    print(reduced.T.shape)
     return reduced.T
 
 
@@ -152,9 +166,21 @@ def _get_max_track(spec, unvoiced_frames =[],min_hz=50, max_hz=500):
 
 
 # main function
-def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, plot=False):
+def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.3,target_rate=100,plot=False):
     """
-    extract f0 track from speech wav file using synchrosqueezed spectrogram and frequency domain autocorrelation
+    Extracts f0 track from speech .wav file using synchrosqueezed spectrogram and frequency domain autocorrelation.
+
+    Args:
+        utt_wav (str): path to the audio file
+        min_hz (int): minimum f0 value to consider
+        max_hz (int): maximum f0 value to consider
+        voicing_thresh (float): voicing decision tuner, 0.:all voiced, 1.:nothing voiced
+        target_rate (float): number of pitch values per second to output
+        plot (bool): visualize the analysis process
+    Returns:
+        tuple containing 2 arrays with length  ceil(len(wav)*sr) / round(sr/target_rate))
+        - track (np.array): array containing f0 values, unvoiced frames=0. 
+        - interp_track (np.array)): array containing f0 values with unvoiced gaps filled using interpolation
     """
     
     # some internal constants, could be user params also
@@ -289,7 +315,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     interp_track[voiced_frames] = track[voiced_frames]
     interp_track = scipy.signal.medfilt(interp_track, 5)
     interp_track = _smooth(interp_track, 5)
-
+ 
     # convert to target frame rate 
     if target_rate != INTERNAL_RATE:
        
@@ -309,7 +335,6 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
             y, sr = librosa.load(utt_wav)
             f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
             plt.plot(f0_pyin, color="red", linestyle="dotted", label="pyin")
-        
             print(len(f0_pyin), len(track))
             plt.legend()
             plt.show()
@@ -318,7 +343,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
 
 
 
-def extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, output_directory=None, wavelet=False, output_format="txt"):
+def _extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, output_directory=None, wavelet=False, output_format="txt"):
     f0, if0 = track_pitch(utt_wav, min_hz, max_hz, voicing_thresh, target_rate)
     if wavelet:
          cwt_mat = f0_cwt(np.log(if0))
@@ -326,8 +351,9 @@ def extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_ra
         out_name = output_directory+"/"+os.path.splitext(os.path.basename(utt_wav))[0]
     else:
         out_name = os.path.splitext(utt_wav)[0]
+   
     if output_format == "txt":
-        np.savetxt(out_name+".interp.txt", if0, fmt='%f')    
+        np.savetxt(out_name+".interp.txt", if0, fmt='%f')   
         np.savetxt(out_name+".f0.txt", f0, fmt='%f')
         if wavelet:
             np.savetxt(out_name+".cwt.txt", cwt_mat, fmt='%f')
@@ -336,7 +362,7 @@ def extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_ra
         torch.save(torch.from_numpy(if0), out_name+".interp.pt")
         torch.save(torch.from_numpy(f0), out_name+".f0.pt")
         if wavelet:
-            torch.save(torch.from_numpy(cwt_mat),out_name+".cwt.txt")
+            torch.save(torch.from_numpy(cwt_mat),out_name+".cwt.pt")
             
 
 def main():
@@ -404,7 +430,7 @@ def main():
         except:
             pass
     
-    Parallel(n_jobs=args.nb_jobs)(delayed(extract_to_file)(f, 
+    Parallel(n_jobs=args.nb_jobs)(delayed(_extract_to_file)(f, 
             args.min_hz, 
             args.max_hz, 
             args.voicing_thresh,
