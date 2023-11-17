@@ -1,9 +1,10 @@
 # PitchSqueezer
-A pitch tracker for speech, using synchro-squeezed stft and frequency domain autocorrelation. The tool relies heavily on the nice [ssqueezepy](https://github.com/OverLordGoldDragon/ssqueezepy/tree/master/ssqueezepy]) package
+A pitch tracker for speech, using synchro-squeezed stft and frequency domain autocorrelation, designed to analyze imperfect recordings of spontaneous speech.
+Relies heavily on the nice [ssqueezepy](https://github.com/OverLordGoldDragon/ssqueezepy/tree/master/ssqueezepy]) package.
 
 Good:
 * robust to creaky voices and bad recordings
-* does not need finetuning for min and max f0
+* does not need finetuning for min and max f0, works fine with both low and high pitched voices
 * acceptably fast
 * provides (alternatively) a continuous pitch track, filling unvoiced gaps relatively naturally
 * provides a wavelet decomposition of the pitch track (reversible, except for mean value) 
