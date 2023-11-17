@@ -25,7 +25,7 @@ def f0_cwt(f0_interp, plot=False):
     Returns:
         - scalogram (np.array with shape(len(f0_interp),5)): five scales corresponding roughly to phone, 
         syllable, word, phrase and utterance level movement of pitch. 
-        np.sum(scalogram, axis=0) produces the original pitch track with mean valuesubtracted.
+        np.sum(scalogram, axis=0) produces the original pitch track with mean value subtracted.
 
  
     """
@@ -53,7 +53,7 @@ def f0_cwt(f0_interp, plot=False):
 
     if plot:
         plt.plot(f0_interp, label="original")
-        plt.plot(np.sum(scalogram, axis=0), label="reconstructed")
+        plt.plot(np.sum(reduced[1:], axis=0), label="reconstructed")
         for i in range(0, 5):
             plt.plot(reduced[i]+i*0.5+0.5, color="black")
         plt.legend()
@@ -186,7 +186,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.3,target_rate=10
     # some internal constants, could be user params also
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
-    SPEC_SLOPE = 1.5     # adjusting slope steeper will emphasize lower harmonics
+    SPEC_SLOPE = 1.25     # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 3.    #
     VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-20
@@ -307,14 +307,16 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.3,target_rate=10
         plt.show()
 
     # fill unvoiced gaps and postprocess 
-   
-    interp_track = scipy.signal.medfilt(track, 9)
+    
+    interp_track = scipy.signal.medfilt(track, 5)
+    # if stylize: make low creaks unvoiced to get smoother melody
+    interp_track[interp_track<np.median(interp_track[voiced_frames])*0.7] = 0
     interp_track = _interpolate_zeros(interp_track, method='akima')
    
     # combine interpolated unvoiced regions and unsmoothed voiced regions and smooth again
-    interp_track[voiced_frames] = track[voiced_frames]
+    #interp_track[voiced_frames] = track[voiced_frames]
     interp_track = scipy.signal.medfilt(interp_track, 5)
-    interp_track = _smooth(interp_track, 5)
+    #interp_track = _smooth(interp_track, 5)
  
     # convert to target frame rate 
     if target_rate != INTERNAL_RATE:
@@ -330,7 +332,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.3,target_rate=10
         if target_rate == INTERNAL_RATE:
             plt.imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
        
-            plt.plot(interp_track, linestyle="dotted", color="white", alpha=0.3)
+            plt.plot(interp_track, linestyle="dotted", color="blue")
             plt.plot(track, linestyle="dotted", color="white", label="squeezer")
             y, sr = librosa.load(utt_wav)
             f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
