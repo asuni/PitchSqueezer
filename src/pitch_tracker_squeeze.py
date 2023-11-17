@@ -89,7 +89,7 @@ def _interpolate_zeros(params, method='pchip', min_val = 0):
 
   
     for i in range(0, len(end_i)):
-        print(voiced[end_i[i]])
+    
         voiced[st_i[i]+1] = voiced[st_i[i]-1]-1 # constrains akima
         voiced[end_i[i]-1] = voiced[end_i[i]]-1 # constrains akima
         gap_len = end_i[i]-st_i[i]
@@ -113,15 +113,11 @@ def _interpolate_zeros(params, method='pchip', min_val = 0):
 def _hz_to_semitones(hz_values, base_freq=50):
     return 12 * np.log2(hz_values / base_freq)
 
-def _apply_target_rate(pitch_track, old_frame_rate, new_frame_rate):
-    old_frame_shift = 1./old_frame_rate
-    new_frame_shift = 1./new_frame_rate
-    old_time_points = np.arange(0, len(pitch_track) * old_frame_shift, old_frame_shift)
-    old_time_points = old_time_points[:len(pitch_track)] # to avoid rounding errors
-    new_time_points = np.arange(0, old_time_points[-1], new_frame_shift)
-    new_time_points = np.arange(0, old_time_points[-1], new_frame_shift)
 
-    # Interpolate pitch values at the new time points
+def _apply_target_rate(pitch_track, old_frame_rate, new_frame_rate):
+    ratio = new_frame_rate / old_frame_rate
+    old_time_points = np.linspace(0, len(pitch_track) / old_frame_rate, num=len(pitch_track))
+    new_time_points = np.linspace(0, old_time_points[-1], num=round(len(pitch_track)*ratio))
     new_pitch_track = np.interp(new_time_points, old_time_points, pitch_track)
     return new_pitch_track
 
@@ -171,6 +167,11 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     MIN_VAL = 0.000001
     PLT_MAX_HZ = max_hz  
 
+    orig_sr = librosa.get_samplerate(utt_wav)
+    # get integer ratio between original and internal sample rate to avoid rounding problems
+    if orig_sr in [11025, 22050, 44100]:
+        SR = 4410
+    # read wav file, 
     # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
     sig, fs = librosa.load(utt_wav, sr=SR)
     sig = _hp_filter(sig, cutoff_frequency=80)
@@ -180,7 +181,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     frame_shift = int(round(SR/INTERNAL_RATE)) 
     ssq_fft ,fft2, *_ = ssq_stft(sig, n_fft=int(SR),win_len=int(SR/4),hop_len=frame_shift)
     ssq_fft = abs(ssq_fft).T # personal preference for (time, hz) shape
-
+   
      ### for voicing decision, use stft with shorter window                                                                                                                          
     short_win_fft, *_= ssq_stft(sig, n_fft=int(SR),win_len=int(SR/16),hop_len=frame_shift)
     short_win_fft = abs(short_win_fft).T
@@ -382,7 +383,7 @@ def main():
     
     if args.plot:
         for f in input_files:
-            os.system("play "+f+ "&")
+            os.system("play -q "+f+ "&")
             f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
             if args.wavelet:
                 f0_cwt(np.log(if0), plot=True)
