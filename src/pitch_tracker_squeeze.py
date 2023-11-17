@@ -200,7 +200,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         ax[0].set_title("fft", loc="left", x=0.02, y=0.7, color="white")
 
     pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,2])
-   
+    pic[pic<MIN_VAL] = MIN_VAL
 
     if plot:
         ax[1].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
@@ -301,12 +301,15 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         track[unvoiced_frames] = 0 # if the iterpolation has smoothed track
    
     if plot:
-        plt.plot(interp_track)
-        plt.plot(track)
+        plt.plot(interp_track, linestyle="dotted", color="white", alpha=0.3)
+        plt.plot(track, linestyle="dotted", color="white", label="squeezer")
         y, sr = librosa.load(utt_wav)
         f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
-        plt.plot(f0_pyin, color="red", linestyle="dotted")
+        plt.plot(f0_pyin, color="red", linestyle="dotted", label="pyin")
+        if target_rate == INTERNAL_RATE:
+            plt.imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
         print(len(f0_pyin), len(track))
+        plt.legend()
         plt.show()
 
     return (track, interp_track)
@@ -376,6 +379,8 @@ def main():
         input_files = sorted(glob.glob(args.input + "/*.wav"))
 
     if args.plot:
+        import random
+        random.shuffle(input_files)
         for f in input_files:
             os.system("play -q "+f+ "&")
             f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
