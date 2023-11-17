@@ -160,10 +160,11 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     # some internal constants, could be user params also
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
-    SPEC_SLOPE = 1.5     # adjusting slope steeper will emphasize lower harmonics
-    ACORR_WEIGHT = 4.    #
+    SPEC_SLOPE = 1.25     # adjusting slope steeper will emphasize lower harmonics
+    ACORR_WEIGHT = 3.    #
     VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
-    MIN_VAL = 0.000001
+    MIN_VAL = 1.0e-20
+    
     PLT_MAX_HZ = max_hz  
     orig_sr = librosa.get_samplerate(utt_wav)
 
@@ -199,7 +200,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         ax[0].set_title("fft", loc="left", x=0.02, y=0.7, color="white")
 
     pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,2])
-    pic[pic<MIN_VAL] = MIN_VAL
+   
 
     if plot:
         ax[1].imshow(np.log(pic[:,:PLT_MAX_HZ]).T, aspect="auto", origin="lower")
@@ -267,7 +268,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
     min_freq,max_freq = np.min(raw_f0), np.max(raw_f0)
     scales = np.arange(min_freq, max_freq, 1)
     scales = _hz_to_semitones(scales, min_freq)
-
+    pic[pic<MIN_VAL] = MIN_VAL
     # viterbi search for the best path
     track = extract_ridges(pic[:,min_freq:max_freq].T,scales, penalty=VITERBI_PENALTY, n_ridges=1, transform="fft")  
     track = np.array(track).astype('float').flatten()+min_freq
@@ -303,7 +304,7 @@ def track_pitch(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=2
         plt.plot(interp_track)
         plt.plot(track)
         y, sr = librosa.load(utt_wav)
-        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, frame_length = 1024) #hop_length = round(sr/target_rate))
+        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
         plt.plot(f0_pyin, color="red", linestyle="dotted")
         print(len(f0_pyin), len(track))
         plt.show()
