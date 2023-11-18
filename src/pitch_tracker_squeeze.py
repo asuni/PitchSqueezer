@@ -61,6 +61,7 @@ def f0_cwt(f0_interp, plot=False):
     return reduced.T
 
 
+
 def _hp_filter(sig, cutoff_frequency=60, order=2):
     from scipy.signal import butter, filtfilt
     b, a = butter(order, cutoff_frequency / (0.5 * 4000), btype='high', analog=False)
@@ -205,10 +206,10 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.3,target_rate=10
     # some internal constants, could be user params also
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
-    BINS_PER_HZ = 10.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
+    BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
     SPEC_SLOPE = 1.25    # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 3.    #
-    VITERBI_PENALTY = 3  # larger values will provide smoother track but might cut through fast moving peaks
+    VITERBI_PENALTY = 3/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-20
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
