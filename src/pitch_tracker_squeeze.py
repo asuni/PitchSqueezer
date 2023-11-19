@@ -177,7 +177,7 @@ def _remove_outliers(track):
         return fixed
     mean_track = _smooth(mean_track, 600)
    
-    fixed[fixed<mean_track*0.8]=0 
+    fixed[fixed<mean_track*0.75]=0 
     if 1==2 and len(fixed[fixed==0])!=len(track[track==0]):
         plt.figure()
         plt.plot(mean_track)
@@ -223,7 +223,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
-    SPEC_SLOPE = 1.25   # adjusting slope steeper will emphasize lower harmonics
+    SPEC_SLOPE = 1.35   # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 3.    #
     VITERBI_PENALTY = 3/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-20
@@ -247,9 +247,10 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     # do ffts on the signal
     frame_shift = round(SR/INTERNAL_RATE)
     ssq_fft ,fft2, *_ = ssq_stft(sig ,n_fft = int(SR*BINS_PER_HZ), win_len=int(SR/4),hop_len=frame_shift)
-
     ssq_fft = abs(ssq_fft).T # personal preference for (time, hz) shape
 
+    short_win_fft, short_win_fft2,*_ = ssq_stft(sig, n_fft=int(SR*BINS_PER_HZ),win_len=int(SR/16),hop_len=frame_shift)
+    short_win_fft = abs(short_win_fft).T
    
     if plot:
         fig, ax = plt.subplots(6, 1, sharex=True, sharey=True)
@@ -287,9 +288,13 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
     
     # voicing decision from autocorrelation and short window fft
-    acorr_energy = np.sum(acorr1[:, min_hz_bin:max_hz_bin*2], axis=1)
    
-    voicing_strength = np.log(acorr_energy+1.)
+    e1 = np.log(np.sum(acorr1, axis=1)+1.)
+    e1 = (e1-np.min(e1))/np.ptp(e1)
+    e2 = np.log(np.sum(short_win_fft[:,min_hz_bin:max_hz_bin], axis=1)+1.)
+    e2 = (e2-np.min(e2))/np.ptp(e2)
+
+    voicing_strength = e1+e2
     unvoiced_frames  = voicing_strength < voicing_thresh
 
     # remove short sections
@@ -366,13 +371,13 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
         y, sr = librosa.load(utt_wav, sr=None)
           
         print("yin analyzing...")
-        #f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
+        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
         print("yin done.")
       
-        #print(len(f0_pyin), len(track))
+        print(len(f0_pyin), len(track))
         #track[track==0] = np.nan
         
-        #plt.plot(f0_pyin*BINS_PER_HZ, color="red", label="pyin")
+        plt.plot(f0_pyin*BINS_PER_HZ, color="red", label="pyin")
        
         plt.plot(track*BINS_PER_HZ, color="black", label="squeezer")
         plt.legend()
