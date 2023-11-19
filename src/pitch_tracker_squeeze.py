@@ -339,12 +339,12 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.3,target_rate=10
     track[unvoiced_frames] = 0 # if the iterpolation has smoothed track
 
     if plot:
-        if target_rate == INTERNAL_RATE:
-            plt.imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
+        #if target_rate == INTERNAL_RATE:
+        #    plt.imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
 
         plt.plot(interp_track, linestyle="dotted", color="black")
           
-        y, sr = librosa.load(utt_wav)
+        y, sr = librosa.load(utt_wav, sr=None)
           
         print("yin analyzing...")
         f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = round(sr/target_rate))
