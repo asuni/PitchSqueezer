@@ -2,6 +2,12 @@
 A pitch tracker for speech, using synchro-squeezed stft and frequency domain autocorrelation, designed to analyze imperfect recordings of spontaneous speech.
 Relies heavily on the nice [ssqueezepy](https://github.com/OverLordGoldDragon/ssqueezepy/tree/master/ssqueezepy]) package.
 
+Installation (soon!): 
+```
+pip install pitchsqueezer
+```
+Docs: https://github.com/asuni/PitchSqueezer/blob/main/doc/pitch_squeezer.html
+
 Good:
 * robust to creaky voices and bad recordings
 * does not need finetuning for min and max f0, works fine with both low and high pitched voices
@@ -15,10 +21,10 @@ Not so great:
 * voicing decision is simplistic
 * robustness to noise is questionable
 * all these assesments are impressionistic
-* yes, I am only vaguely aware of the difference between pitch and f0
+
 
 Visualization of the method: <img src="images/Figure_1.png">
 
 
 
-Totally representative comparison with librosa.pyin on creaky female voice: <img src="images/squeezer_vs_pyin.png">
+ comparison with librosa.pyin on creaky female voice: <img src="images/squeezer_vs_pyin.png">
