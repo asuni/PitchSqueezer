@@ -168,6 +168,20 @@ def _get_max_track(spec, unvoiced_frames =[],min_hz=50, max_hz=500):
     f0[unvoiced_frames] = 0
     return f0
 
+def _summation(spec, min_hz, max_hz):
+    spec = librosa.power_to_db(spec,ref=np.mean(spec))
+    summogram = np.zeros(spec[:, :max_hz].shape)
+    freq_range = np.arange(min_hz, max_hz)
+    for k in range(1, 5):
+        bin_indices = freq_range * k
+        summogram[:, freq_range] += spec[:, bin_indices] # - spec[:, (bin_indices - 0.5).astype(int)]
+    #ummogram[summogram<0]=0
+    energy2 = np.sum(summogram[:,min_hz:max_hz], axis=1)
+    energy2 = (energy2-np.min(energy2))/np.ptp(energy2)
+    summogram = librosa.power_to_db(summogram,ref=np.max(summogram))
+    
+    return energy2
+   
 def _remove_outliers(track):
     fixed = np.array(track)
     mean_track = scipy.signal.medfilt(track, 31)
@@ -283,24 +297,27 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     
     # multiply spec with the whole correlogram, mainly for denoising aperiodic sections
     pic[:, :length] *=acorr1
+   
     
-    if plot:
-        _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
-    
-    # voicing decision from autocorrelation and short window fft
+    # voicing decision from autocorrelation, short window fft and harmonic sum
    
     e1 = np.log(np.sum(acorr1, axis=1)+1.)
     e1 = (e1-np.min(e1))/np.ptp(e1)
     e2 = np.log(np.sum(short_win_fft[:,min_hz_bin:max_hz_bin], axis=1)+1.)
     e2 = (e2-np.min(e2))/np.ptp(e2)
-
-    voicing_strength = e1+e2
+    e3 = _summation(pic, min_hz_bin, max_hz_bin)
+    voicing_strength = e1+e2+e3*0.5
+   
     unvoiced_frames  = voicing_strength < voicing_thresh
 
     # remove short sections
-    unvoiced_frames = scipy.signal.medfilt(unvoiced_frames.astype('int'), 11).astype('bool')
+    unvoiced_frames = scipy.signal.medfilt(unvoiced_frames.astype('int'), 5).astype('bool')
     voiced_frames =  np.invert(unvoiced_frames)
 
+    if plot:
+        ax[2].plot(voicing_strength*100, "white")
+        _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
+    
     # dampen higher frequencies to reduce octave jumps up
     pic = _add_slope(pic, min_hz=0, max_hz=max_hz_bin, steepness=SPEC_SLOPE)
       
