@@ -158,9 +158,12 @@ def _construct_window(mean_hz, bins_per_hz):
     return window
 
 def _add_slope(spec, min_hz=50, max_hz=500, steepness=1.):
+    orig_energy = np.sum(spec[:,min_hz:max_hz])
     #increasing spectral slope, in order to make fundamental stand out more
     if min_hz<1:min_hz = 1
     spec[:, np.arange(min_hz, max_hz)] /=  np.arange(min_hz,max_hz) ** steepness
+    spec[:, np.arange(min_hz, max_hz)] *= orig_energy / np.sum(spec[:, np.arange(min_hz, max_hz)])
+    #spec[]
     return spec
 
 def _get_max_track(spec, unvoiced_frames =[],min_hz=50, max_hz=500):
@@ -172,13 +175,13 @@ def _summation(spec, min_hz, max_hz):
     spec = librosa.power_to_db(spec,ref=np.mean(spec))
     summogram = np.zeros(spec[:, :max_hz].shape)
     freq_range = np.arange(min_hz, max_hz)
-    for k in range(1, 5):
+    for k in range(1, 3):
         bin_indices = freq_range * k
         summogram[:, freq_range] += spec[:, bin_indices] # - spec[:, (bin_indices - 0.5).astype(int)]
     #ummogram[summogram<0]=0
     energy2 = np.sum(summogram[:,min_hz:max_hz], axis=1)
     energy2 = (energy2-np.min(energy2))/np.ptp(energy2)
-    summogram = librosa.power_to_db(summogram,ref=np.max(summogram))
+    #summogram = librosa.power_to_db(summogram,ref=np.max(summogram))
     
     return energy2
    
@@ -201,8 +204,11 @@ def _remove_outliers(track):
     return fixed
 
 def _plt(spec, uv_frames, min=0, max=500, ax=None, title=""):
-    ax.imshow(np.log(spec[:,int(min):int(max)]).T, aspect="auto", origin="lower")
-    ax.plot(_get_max_track(spec, uv_frames, max_hz=max), color="orange")
+   
+   
+    ax.imshow(np.log(spec[:,int(min):int(max)]).T, aspect="auto", origin="lower",cmap="viridis")
+ 
+    ax.plot(_get_max_track(spec, uv_frames, max_hz=max), color="white", linestyle="dotted")
     ax.set_title(title, loc="left", x=0.02, y=0.7, color="white")
 
 
@@ -240,7 +246,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     SPEC_SLOPE = 1.35   # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 3.    #
     VITERBI_PENALTY = 3/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
-    MIN_VAL = 1.0e-20
+    MIN_VAL = 1.0e-15
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
     orig_sr = librosa.get_samplerate(utt_wav)
@@ -277,11 +283,13 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
         _plt(pic_fft, unvoiced_frames, max=max_hz_bin, ax=ax[0], title="fft")
       
     pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,1*BINS_PER_HZ])
+    
     pic[pic<MIN_VAL] = MIN_VAL
-
+   
     if plot:
          _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[1], title="synchro-squeezing")
-      
+   
+   
     # frequency domain autocorrelation
     length = int(SR*BINS_PER_HZ/2)
     acorr1 = librosa.autocorrelate(pic[:,:length], max_size=int(SR/2*BINS_PER_HZ), axis=1)
@@ -313,11 +321,11 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     # remove short sections
     unvoiced_frames = scipy.signal.medfilt(unvoiced_frames.astype('int'), 5).astype('bool')
     voiced_frames =  np.invert(unvoiced_frames)
-
-    if plot:
-        ax[2].plot(voicing_strength*100, "white")
-        _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
     
+    if plot:
+        #ax[2].plot(voicing_strength*100, "white")
+        _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
+       
     # dampen higher frequencies to reduce octave jumps up
     pic = _add_slope(pic, min_hz=0, max_hz=max_hz_bin, steepness=SPEC_SLOPE)
       
@@ -354,7 +362,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
         return (track, track)
     if plot:
         ax[5].imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
-        ax[5].plot(track, color="orange", linestyle="dotted")
+        ax[5].plot(track, color="white", linestyle="dotted")
         ax[5].set_title("+viterbi", loc="left",x=0.02, y=0.7, color="white")
         plt.show()
 
@@ -382,7 +390,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     if plot:
         #if target_rate == INTERNAL_RATE:
         #    plt.imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
-
+        plt.figure(figsize=(12,4))
         plt.plot(interp_track, linestyle="dotted", color="black")
           
         y, sr = librosa.load(utt_wav, sr=None)
@@ -489,10 +497,12 @@ def main():
         input_files = sorted(glob.glob(args.input + "/*.wav"))
 
     if args.plot:
+        import signal
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         #import random
         #random.shuffle(input_files)
         for f in input_files:
-            print("analyzing "+f)
+            print("analyzing "+f+".  (ctrl-c to quit.)")
             os.system("play -q "+f+ "&")
             f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
             if args.wavelet:
