@@ -419,10 +419,14 @@ def main():
         $ pitchsqueezer --nb_jobs 2 --frame_rate 86.1326 --min_hz 120 --max_hz 500 \\
         --wavelet -o output_dir/ -f npy mydata/female_wavs/ 
 
+        # check parameters by visual examination
+        $ pitchsqueezer wav_dir/ --plot
+
+        # check usage and default values 
         $ pitchsqueezer --help
         
         usage: pitchsqueezer [-h] [-m MIN_HZ] [-M MAX_HZ] [-t VOICING_THRESH] [-r FRAME_RATE] [-j NB_JOBS] [-w] [-p] [-f {txt,pt,npy}] [-o OUTPUT_DIRECTORY] input
-
+        ...
         ```
     """
     import argparse, glob
@@ -465,8 +469,8 @@ def main():
         input_files = sorted(glob.glob(args.input + "/*.wav"))
 
     if args.plot:
-        import random
-        random.shuffle(input_files)
+        #import random
+        #random.shuffle(input_files)
         for f in input_files:
             print("analyzing "+f)
             os.system("play -q "+f+ "&")
