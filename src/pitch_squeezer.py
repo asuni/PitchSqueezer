@@ -376,10 +376,13 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
       
         print(len(f0_pyin), len(track))
         #track[track==0] = np.nan
-        
+        plot_track = np.array(track)
+        plot_track[track==0] = np.nan
+       
+        plt.plot(plot_track*BINS_PER_HZ, color="black", label="squeezer")
         plt.plot(f0_pyin*BINS_PER_HZ, color="red", label="pyin")
        
-        plt.plot(track*BINS_PER_HZ, color="black", label="squeezer")
+        
         plt.legend()
         plt.show()
 

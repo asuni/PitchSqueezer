@@ -6,7 +6,7 @@ Installation (soon!):
 ```
 pip install pitchsqueezer
 ```
-Docs: https://github.com/asuni/PitchSqueezer/blob/main/doc/pitch_squeezer.html
+Docs: https://asuni.github.io/PitchSqueezer/
 
 Good:
 * robust to creaky voices and bad recordings
