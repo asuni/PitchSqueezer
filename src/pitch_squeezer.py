@@ -243,7 +243,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
-    SPEC_SLOPE = 1.35   # adjusting slope steeper will emphasize lower harmonics
+    SPEC_SLOPE = 1.25   # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 3.    #
     VITERBI_PENALTY = 3/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-15
@@ -380,8 +380,10 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.1,target_rate=10
     #if target_rate != INTERNAL_RATE:
        
         # for compatibility with librosa pyin and pytorch stft
-    
-    n_target_frames = np.ceil(orig_sig_len/np.floor(orig_sr/target_rate)).astype('int')
+    #n_target_frames = np.ceil(orig_sig_len/(np.floor(orig_sr/target_rate))).astype('int')
+    n_target_frames = np.floor(orig_sig_len/(orig_sr/target_rate)+1.).astype('int')
+   
+  
     track = _apply_target_rate(track, INTERNAL_RATE, n_target_frames)
     interp_track = _apply_target_rate(interp_track, INTERNAL_RATE, n_target_frames)
     unvoiced_frames = _apply_target_rate(unvoiced_frames.astype('int'), INTERNAL_RATE, n_target_frames).astype('bool')
