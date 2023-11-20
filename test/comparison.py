@@ -6,11 +6,21 @@ import matplotlib.pyplot as plt
 import pyworld as pw
 import soundfile as sf
 import os
+
+
+def _highlight(f0s, index):
+    colors = ["green", "blue", "red"]
+    for i in range(len(f0s)):
+        if i == index:
+            plt.plot(f0s[i], color=colors[i], linewidth=2)
+        else:
+            plt.plot(f0s[i], color=colors[i],alpha=0.1)
+        plt.pause(0.1)
 def anasyn(wav):
     
   
     start_time = time.time()
-    f0_ps, if0_ps = ps.track_pitch(wav, voicing_thresh=0.25, target_rate=200)
+    f0_ps, if0_ps = ps.track_pitch(wav, voicing_thresh=0.2, target_rate=200)
     print("squeezer analysis done in ", time.time()-start_time, "seconds")
 
     start_time = time.time()
@@ -46,26 +56,24 @@ def anasyn(wav):
     sf.write("output2.wav", y2, fs)
     sf.write("output3.wav", y3, fs)
     #librosa.output.write_wav("output.wav", generated_audio, 4000)
+    f0s = (f0_pyin, f0_ps, f0)
 
     print("synthesized with pyin f0...")
     plt.cla()
     plt.title("pyin")
-    plt.plot(f0_pyin)
-    plt.pause(0.05)
+    _highlight(f0s, 0)
     os.system("afplay output.wav")
 
     print("synthesized with pitchsqueezer f0...")
     plt.cla()
     plt.title("pitchsqueezer")
-    plt.plot(f0_ps)
-    plt.pause(0.05)
+    _highlight(f0s, 1)
     os.system("afplay output2.wav")
 
     print("synthesized with World f0...")
     plt.cla()
     plt.title("world")
-    plt.plot(f0)
-    plt.pause(0.05)
+    _highlight(f0s, 2)
     os.system("afplay output3.wav")
 
 if __name__ == "__main__":
