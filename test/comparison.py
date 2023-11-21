@@ -6,21 +6,41 @@ import matplotlib.pyplot as plt
 import pyworld as pw
 import soundfile as sf
 import os
-
+from pygame import mixer
 
 def _highlight(f0s, index):
     colors = ["green", "blue", "red"]
     for i in range(len(f0s)):
+        f0s[i][(f0s[i]==0)] = np.nan
         if i == index:
             plt.plot(f0s[i], color=colors[i], linewidth=2)
         else:
-            plt.plot(f0s[i], color=colors[i],alpha=0.1)
+            plt.plot(f0s[i], color=colors[i],alpha=0.15)
         plt.pause(0.1)
+
+def play(wav):
+    
+    def play_wav(wav):
+        #os.system("play "+wav)
+        #print(wav)
+        mixer.music.load(wav)
+        mixer.music.play()
+   
+    from threading import Thread
+    # Play Music on Separate Thread (in background)
+    #music_thread = Thread(target=play_wav, args=([wav]))
+    #music_thread.start()
+    play_wav(wav)
+    input("press ENTER to stop playback")
+    mixer.music.stop()
+    #music_thread.join()
+   
+
 def anasyn(wav):
     
-  
+
     start_time = time.time()
-    f0_ps, if0_ps = ps.track_pitch(wav, voicing_thresh=0.2, target_rate=200)
+    f0_ps, if0_ps = ps.track_pitch(wav, voicing_thresh=0.25, target_rate=200)
     print("squeezer analysis done in ", time.time()-start_time, "seconds")
 
     start_time = time.time()
@@ -35,16 +55,18 @@ def anasyn(wav):
     f0 = pw.stonemask(x, _f0, t, fs)  # pitch refinement
     print("world f0 analysis done in ", time.time()-start_time, "seconds")
     plt.ion()
-    print(f0_pyin.shape, f0_ps.shape)
+    #print(f0_pyin.shape, f0_ps.shape)
     f0_pyin = f0_pyin[:len(f0)]
     f0_ps = f0_ps[:len(f0)]
+    
     sp = pw.cheaptrick(x, f0, t, fs)  # extract smoothed spectrogram
+    print(sp.shape)
+    sp[f0_ps>0] = np.mean(sp[f0_ps>0], axis=0)
     ap = pw.d4c(x, f0, t, fs)         # extract aperiodicity
     ap[:] = 0.
    
     f0_pyin[np.isnan(f0_pyin)] = 0
    
-    
     y1 = pw.synthesize(f0_pyin, sp, ap, fs)
     y2 = pw.synthesize(f0_ps, sp, ap, fs) # synthesize an utterance using the parameters
     y3 = pw.synthesize(f0, sp, ap, fs) # synthesize an utterance using the parameters
@@ -62,28 +84,32 @@ def anasyn(wav):
     plt.cla()
     plt.title("pyin")
     _highlight(f0s, 0)
-    os.system("afplay output.wav")
+    play("output.wav")
 
     print("synthesized with pitchsqueezer f0...")
     plt.cla()
     plt.title("pitchsqueezer")
     _highlight(f0s, 1)
-    os.system("afplay output2.wav")
+    play("output2.wav")
+  
 
     print("synthesized with World f0...")
     plt.cla()
     plt.title("world")
     _highlight(f0s, 2)
-    os.system("afplay output3.wav")
-
+  
+    play("output3.wav")
+    plt.cla()
+    
 if __name__ == "__main__":
     import sys, glob
     test_files = sorted(glob.glob(sys.argv[1]+"/*.wav"))
     import random
     random.shuffle(test_files)
     plt.figure(figsize=(12,4))
+    mixer.init()
     for f in test_files:
-        os.system("play "+f)
+        play(f)
         print("analyzing "+f)
        
         anasyn(f )
