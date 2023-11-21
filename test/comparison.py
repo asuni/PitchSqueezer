@@ -36,7 +36,7 @@ def play(wav):
     #music_thread.join()
    
 
-def anasyn(wav):
+def anasyn(wav, delexicalize=False):
     
 
     start_time = time.time()
@@ -58,26 +58,30 @@ def anasyn(wav):
     #print(f0_pyin.shape, f0_ps.shape)
     f0_pyin = f0_pyin[:len(f0)]
     f0_ps = f0_ps[:len(f0)]
-    
     sp = pw.cheaptrick(x, f0, t, fs)  # extract smoothed spectrogram
-    print(sp.shape)
-    sp[f0_ps>0] = np.mean(sp[f0_ps>0], axis=0)
+    if delexicalize:
+       
+        energy = np.sum(sp, axis=1)
+        energy = (energy - np.min(energy)) / np.ptp(energy)
+        sp[:] = np.mean(sp, axis=0)
+        #sp[f0_ps>0] = np.mean(sp[f0_ps>0], axis=0)
+        sp*=energy[:, np.newaxis]
+
     ap = pw.d4c(x, f0, t, fs)         # extract aperiodicity
     ap[:] = 0.
    
     f0_pyin[np.isnan(f0_pyin)] = 0
    
     y1 = pw.synthesize(f0_pyin, sp, ap, fs)
-    y2 = pw.synthesize(f0_ps, sp, ap, fs) # synthesize an utterance using the parameters
-    y3 = pw.synthesize(f0, sp, ap, fs) # synthesize an utterance using the parameters
-    #ap = ap[:len(f0_ps)]
-    #sp = sp[:len(f0_ps)]
+    y2 = pw.synthesize(f0_ps, sp, ap, fs) 
+    y3 = pw.synthesize(f0, sp, ap, fs) 
     
-    y2 = pw.synthesize(f0_ps, sp, ap, fs) # synthesize an utterance using the parameters
+    
+  
     sf.write("output.wav", y1, fs)
     sf.write("output2.wav", y2, fs)
     sf.write("output3.wav", y3, fs)
-    #librosa.output.write_wav("output.wav", generated_audio, 4000)
+   
     f0s = (f0_pyin, f0_ps, f0)
 
     print("synthesized with pyin f0...")
