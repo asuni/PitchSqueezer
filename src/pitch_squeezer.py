@@ -140,10 +140,8 @@ def _stack_f0(spec, min_hz, max_hz):
     max_ind= np.argmax(spec[:, min_hz:max_hz], axis=1)+min_hz 
     for i in range(0, spec.shape[0]):
         cand = max_ind[i]
-        if cand > 3*min_hz and spec[i, int(cand/3.)] > spec[i, cand] * 0.1 and spec[i, int(cand/2.)] > spec[i, cand] *0.1 :
-            spec[i, int(cand/3.)]+=spec[i, cand]*5.
-        if cand > 2*min_hz and spec[i, int(cand/2.)] > spec[i, cand] * 0.1:
-            spec[i, int(cand/2.)]+=spec[i, cand]*5.
+        if cand > 2*min_hz and spec[i, int(cand/2.)] > spec[i, cand] * 0.2:
+            spec[i, int(cand/2.)]+=spec[i, cand]
     return spec
 
 def _construct_window(mean_hz, bins_per_hz):
@@ -175,44 +173,29 @@ def _summation(spec, min_hz, max_hz):
     for k in range(1, 3):
         bin_indices = freq_range * k
         summogram[:, freq_range] += spec[:, bin_indices] # - spec[:, (bin_indices - 0.5).astype(int)]
-    #ummogram[summogram<0]=0
-    energy2 = np.sum(summogram[:,min_hz:max_hz], axis=1)
-    energy2 = (energy2-np.min(energy2))/np.ptp(energy2)
-    #summogram = librosa.power_to_db(summogram,ref=np.max(summogram))
-    
-    return energy2
+   
+    energy = np.sum(summogram[:,min_hz:max_hz], axis=1)
+    return energy
 
 def _remove_outliers(track):
     fixed = np.array(track)
     mean_track = scipy.signal.medfilt(track, 31)
     try:
-        mean_track = _interpolate_zeros(mean_track, 'linear')
+        mean_track = _interpolate_zeros(track, 'linear')
     except:
         return fixed
     mean_track = _smooth(mean_track, 600)
-
     fixed[fixed<mean_track*0.75]=0 
-    if 1==2 and len(fixed[fixed==0])!=len(track[track==0]):
-        plt.figure()
-        plt.plot(mean_track)
-        plt.plot(track)
-        plt.plot(fixed)
-        plt.show()
     return fixed
 
 def _plt(spec, uv_frames, min=0, max=500, ax=None, title=""):
-
-
     ax.imshow(np.log(spec[:,int(min):int(max)]).T, aspect="auto", origin="lower",cmap="viridis")
-
     ax.plot(_get_max_track(spec, uv_frames, max_hz=max), color="white", linestyle="dotted")
     ax.set_title(title, loc="left", x=0.02, y=0.7, color="white")
 
 
-
-
 # main function
-def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=100,plot=False):
+def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100,plot=False):
     """
     Extracts f0 track from speech .wav file using synchrosqueezed spectrogram and frequency domain autocorrelation.
     Args:
@@ -220,18 +203,18 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
         min_hz (int): minimum f0 value to consider
         max_hz (int): maximum f0 value to consider
         voicing_thresh (float): voicing decision tuner, 0.:all voiced, 1.:nothing voiced
-        target_rate (float): number of pitch values per second to output
+        frame_rate (float): number of pitch values per second to output (sr/frame_length_in_samples)
         plot (bool): visualize the analysis process
 
     Returns:
-        tuple containing 2 arrays with length  ceil(len(wav) / floor(sr/target_rate))
+        tuple containing 2 arrays with length  np.floor(len(wav)/(sr//frame_rate)+1.) 
         - track (np.array): array containing f0 values, unvoiced frames=0. 
         - interp_track (np.array)): array containing f0 values with unvoiced gaps filled using interpolation
 
     Example:
         ```
         import pitch_squeezer as ps
-        f0, if0 = ps.track_pitch("test.wav", target_rate=200)
+        f0, if0 = ps.track_pitch("test.wav", frame_rate=200)
         lf0_cwt = ps.f0_cwt(np.log(if0))
         ```
     """
@@ -262,12 +245,12 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
     sig = (sig-np.mean(sig)) / np.std(sig) 
     
     # do ffts on the signal
-    frame_shift = round(SR/INTERNAL_RATE)
-    target_shift = round(orig_sr/target_rate)
+    frame_shift = int(SR//INTERNAL_RATE)
     ssq_fft ,fft2, *_ = ssq_stft(sig ,n_fft = int(SR*BINS_PER_HZ), win_len=int(SR/4),hop_len=frame_shift)
     ssq_fft = abs(ssq_fft).T # personal preference for (time, hz) shape
 
-    short_win_fft, short_win_fft2,*_ = ssq_stft(sig, n_fft=int(SR*BINS_PER_HZ),win_len=int(SR/16),hop_len=frame_shift)
+    short_win_fft, short_win_fft2,*_ = ssq_stft(sig, n_fft=int(SR*BINS_PER_HZ),win_len=int(SR/20),hop_len=frame_shift)
+   
     short_win_fft = abs(short_win_fft).T
     #print("4000hz n_frames, ssq:", (len(sig)-1)//frame_shift +1, "librosa",np.ceil(len(sig)//(frame_shift)+1.))
     #print(orig_sr, "n_frames, ssq:", (len(orig_sig)-1)//frame_shift_orig +1, "librosa", np.ceil(len(orig_sig)//(frame_shift_orig)+1.))
@@ -277,12 +260,12 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
         pic_fft = abs(fft2).T
         energy2 = np.sum(pic_fft[:,min_hz:max_hz], axis=1)
         unvoiced_frames = energy2 < voicing_thresh*1000
-    
+        
         pic_fft = abs(fft2).T
         _plt(pic_fft, unvoiced_frames, max=max_hz_bin, ax=ax[0], title="fft")
     
     pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,1*BINS_PER_HZ])
-    
+    #pic = short_win_fft #scipy.ndimage.gaussian_filter(short_win_fft,[1,1*BINS_PER_HZ])
     pic[pic<MIN_VAL] = MIN_VAL
 
     if plot:
@@ -314,34 +297,34 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
         np.log(np.median(pic[:,min_hz_bin:max_hz_bin], axis=1)+0.0001)
     
     #e3 = _summation(pic, min_hz_bin, max_hz_bin)
+
     e3 = (e3-np.min(e3))/np.ptp(e3)
-    """
-    plt.plot(e1, label="acorr")
-    plt.plot(e2, label="fft")
-    plt.plot(e3, label="max")
-    plt.legend()
-    plt.show()
-    """
-    voicing_strength = e1+e2+e3*0.5
-    voicing_strength-=np.min(voicing_strength)
+   
+    voicing_strength = e1+e2*0.5+e3
+    # remove background noise floor
+    voicing_strength-=np.percentile(voicing_strength, 10)
+    voicing_strength[voicing_strength<0] = 0
+
     unvoiced_frames  = voicing_strength < voicing_thresh
 
     # remove short sections
     unvoiced_frames = scipy.signal.medfilt(unvoiced_frames.astype('int'), 5).astype('bool')
     voiced_frames =  np.invert(unvoiced_frames)
     
-    #multiply spec with the whole correlogram, mainly for denoising aperiodic sections
+    # multiply spec with the whole correlogram, suppresses non-harmonic stuff
+    
     pic[:, :length] *=acorr1
     if plot:
-        ax[2].plot(e3*200, "white")
+
+        ax[2].plot(voicing_strength*50, "black", alpha=0.3)
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
 
     # dampen higher frequencies to reduce octave jumps up
     pic = _add_slope(pic, min_hz=0, max_hz=max_hz_bin, steepness=SPEC_SLOPE)
     
     # reassign energy from h2 to h1
-    #pic = _stack_f0(pic, min_hz_bin, max_hz_bin)
     pic = _stack_f0(pic, min_hz_bin, max_hz_bin)
+   
 
     if plot:
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[3], title="+skew spectrum + harmonic reassignment")
@@ -360,8 +343,10 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
     min_freq,max_freq = np.min(raw_f0), np.max(raw_f0)
     scales = np.arange(min_freq, max_freq, 1)
     scales = _hz_to_semitones(scales, min_freq)
+    # if signal is hi-pass filtered, viterbi will drift to high freqs during unvoiced parts; add a small bias
+    pic[unvoiced_frames, int(mean_pitch)]+=.0001
     pic[pic<MIN_VAL] = MIN_VAL
-
+    
     # viterbi search for the best path
     track = extract_ridges(pic[:,min_freq:max_freq].T,scales, penalty=VITERBI_PENALTY, n_ridges=1, transform="fft")  
     track = np.array(track).astype('float').flatten()+min_freq
@@ -370,6 +355,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
     if np.all(track == 0):
         print(utt_file+" all unvoiced!.")
         return (track, track)
+    
     if plot:
         ax[5].imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
         ax[5].plot(track, color="white", linestyle="dotted")
@@ -379,22 +365,21 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
 
     # fill unvoiced gaps and postprocess 
 
-    interp_track = _remove_outliers(track)
-    track[interp_track==0] = 0
-    _interpolate_zeros(interp_track, method='akima')
-    interp_track = _interpolate_zeros(interp_track, method='akima')
+    track = _remove_outliers(track)
+    unvoiced_frames[track==0] = True
+    interp_track = _interpolate_zeros(track, method='akima')
     interp_track = scipy.signal.medfilt(interp_track, 5)
     interp_track = _smooth(interp_track, 3)
-
+   
     # convert to target frame rate 
-    #if target_rate != INTERNAL_RATE:
+   
     
-        # for compatibility with librosa pyin and pytorch stft
-    #n_target_frames = np.ceil(orig_sig_len/(np.floor(orig_sr/target_rate))).astype('int')
-    n_target_frames = np.floor(orig_sig_len/np.floor(orig_sr/target_rate)+1.).astype('int')
-
-
+    # for compatibility with librosa pyin and pytorch stft
+    
+    n_target_frames = np.floor(orig_sig_len/(orig_sr//frame_rate)+1.).astype('int')
+ 
     track = _apply_target_rate(track, INTERNAL_RATE, n_target_frames)
+    
     interp_track = _apply_target_rate(interp_track, INTERNAL_RATE, n_target_frames)
     unvoiced_frames = _apply_target_rate(unvoiced_frames.astype('int'), INTERNAL_RATE, n_target_frames).astype('bool')
     track[unvoiced_frames] = 0 # if the iterpolation has smoothed track
@@ -408,7 +393,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
         y, sr = librosa.load(utt_wav, sr=None)
         
         print("yin analyzing...")
-        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/target_rate))
+        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/frame_rate))
         print("yin done.")
     
         print(len(f0_pyin), len(track))
@@ -427,8 +412,8 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,target_rate=10
 
 
 
-def _extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, target_rate=200, output_directory=None, wavelet=False, output_format="txt"):
-    f0, if0 = track_pitch(utt_wav, min_hz, max_hz, voicing_thresh, target_rate)
+def _extract_to_file(utt_wav,min_hz=60, max_hz=500, voicing_thresh=0.3, frame_rate=200, output_directory=None, wavelet=False, output_format="txt"):
+    f0, if0 = track_pitch(utt_wav, min_hz, max_hz, voicing_thresh, frame_rate)
     if wavelet:
         cwt_mat = f0_cwt(np.log(if0))
     if output_directory:
