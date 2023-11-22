@@ -1,2 +1,4 @@
 pyworld
+amfm_decompy
+penn
 pygame
