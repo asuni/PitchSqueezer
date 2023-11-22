@@ -7,9 +7,10 @@ import pyworld as pw
 import soundfile as sf
 import os
 from pygame import mixer
+import penn
 
 def _highlight(f0s, index):
-    colors = ["green", "blue", "red"]
+    colors = ["green", "blue", "red", "black"]
     for i in range(len(f0s)):
         f0s[i][(f0s[i]==0)] = np.nan
         if i == index:
@@ -25,34 +26,39 @@ def play(wav):
         #print(wav)
         mixer.music.load(wav)
         mixer.music.play()
-   
-    from threading import Thread
-    # Play Music on Separate Thread (in background)
-    #music_thread = Thread(target=play_wav, args=([wav]))
-    #music_thread.start()
+
     play_wav(wav)
     input("press ENTER to stop playback")
     mixer.music.stop()
-    #music_thread.join()
+  
    
 
 def anasyn(wav, delexicalize=False):
     
-
+    fmin=60
+    fmax = 500
     start_time = time.time()
     f0_ps, if0_ps = ps.track_pitch(wav, voicing_thresh=0.25, target_rate=200)
     print("squeezer analysis done in ", time.time()-start_time, "seconds")
 
     start_time = time.time()
     x, fs = librosa.load(wav, sr=None)
-    f0_pyin, voiced_flag, voiced_probs = librosa.pyin(x,sr=fs, fmin=50, fmax=500, hop_length = int(fs/200))
+    f0_pyin, voiced_flag, voiced_probs = librosa.pyin(x,sr=fs, fmin=fmin, fmax=fmax, hop_length = int(fs/200))
     print("pyin analysis done in ", time.time()-start_time, "seconds")
-    
+
+    start_time = time.time()
+    f0_fcn, f0_p = penn.from_file(wav,fmin=fmin,fmax=fmax,hopsize=0.005, center='zero')
+    f0_fcn = f0_fcn.cpu().numpy()[0].astype('double')
+    f0_p = f0_p.cpu().numpy()[0].astype('double')
+    f0_fcn[f0_p < 0.3] = 0
+   
+    print("FCNF0++ analysis done in ", time.time()-start_time, "seconds")
 
     start_time = time.time()
     x = np.array(x, dtype=np.double)
     _f0, t = pw.dio(x, fs)    # raw pitch extractor
     f0 = pw.stonemask(x, _f0, t, fs)  # pitch refinement
+    
     print("world f0 analysis done in ", time.time()-start_time, "seconds")
     plt.ion()
     #print(f0_pyin.shape, f0_ps.shape)
@@ -74,15 +80,17 @@ def anasyn(wav, delexicalize=False):
    
     y1 = pw.synthesize(f0_pyin, sp, ap, fs)
     y2 = pw.synthesize(f0_ps, sp, ap, fs) 
-    y3 = pw.synthesize(f0, sp, ap, fs) 
+    y3 = pw.synthesize(f0_fcn, sp, ap, fs)
+    y4 = pw.synthesize(f0, sp, ap, fs) 
     
     
   
     sf.write("output.wav", y1, fs)
     sf.write("output2.wav", y2, fs)
     sf.write("output3.wav", y3, fs)
+    sf.write("output4.wav", y4, fs)
    
-    f0s = (f0_pyin, f0_ps, f0)
+    f0s = (f0_pyin, f0_ps, f0_fcn, f0)
 
     print("synthesized with pyin f0...")
     plt.cla()
@@ -96,12 +104,17 @@ def anasyn(wav, delexicalize=False):
     _highlight(f0s, 1)
     play("output2.wav")
   
+    print("synthesized_with fcn f0...")
+    plt.cla()
+    plt.title("fcn")
+    _highlight(f0s, 2)
+    play("output3.wav")
+  
 
     print("synthesized with World f0...")
     plt.cla()
     plt.title("world")
-    _highlight(f0s, 2)
-  
+    _highlight(f0s, 3)
     play("output3.wav")
     plt.cla()
     
