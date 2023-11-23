@@ -157,38 +157,20 @@ def _apply_varying_window(spec, unvoiced_frames, min_hz=50, max_hz=500, bins_per
     N = 100
     
     pitch = _get_max_track(spec, unvoiced_frames, min_hz*bins_per_hz, max_hz*bins_per_hz)
-   
-    
-    #pitch = _interpolate_zeros(pitch, 'akima')
-    if len(pitch) < N:
-        window = _construct_window(np.mean(pitch), bins_per_hz)
-        spec[:,:len(window)]*= window
-        return spec
-    pitch = scipy.signal.medfilt(pitch, 7)
+    orig_pitch = np.array(pitch)
     pitch[pitch==0] = np.nan
     std = np.nanstd(pitch)
-    idx = np.arange(N) + np.arange(len(pitch)-N)[:,None]
-    mean_track = np.nanmedian(pitch[idx],axis=1)
-    std_track = np.nanstd(pitch[idx],axis=1)
-    std_track = np.pad(std_track, N//2,'edge')
-    mean_track = np.pad(mean_track, N//2,'edge')
-    #mean_track = _smooth(mean_track, 50).astype('int')
-    mean_track[mean_track<min_hz]=min_hz
-    mean_track[np.isnan(mean_track)]=min_hz
-    std_track = _smooth(std_track, 50)
-    std_track[:] = std
-    """
-    plt.plot(pitch)
-    plt.plot(mean_track)
-    plt.plot(mean_track-1*std_track)
-    plt.plot(mean_track+2*std_track)
-    plt.show()
-    """
+    pitch = _interpolate_zeros(pitch, 'linear')
+    
+    pitch = scipy.signal.medfilt(pitch, 7)
+    pitch = _smooth(pitch, 50)
+ 
+  
     for i in range(0, spec.shape[0]):
-        l_window = scipy.signal.windows.gaussian(int(mean_track[i]*2.),std_track[i]*1.5)
-        r_window = scipy.signal.windows.gaussian(int(max_hz-mean_track[i])*2, std_track[i]*1.5)
+        l_window = scipy.signal.windows.gaussian(int(pitch[i]*2.),std*1.5)
+        r_window = scipy.signal.windows.gaussian(int(max_hz-pitch[i])*2, std*1.5)
         window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
-        spec[i,:len(window)]*=window #+np.mean(spec[i,:max_hz])
+        spec[i,:len(window)]*=window+np.mean(spec[i,:max_hz])
         
     return spec
 
@@ -218,16 +200,12 @@ def _summation(spec, min_hz, max_hz):
     return energy
 
 def _remove_outliers(track):
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'All-NaN (slice|axis) encountered')
     fixed = np.array(track)
     mean_track = scipy.signal.medfilt(track, 31)
     
-    """
-    try:
-        mean_track = _interpolate_zeros(track, 'linear')
-    except:
-        return fixed
-    """
-   
     #mean_track = _smooth(mean_track, N)
     #calc running mean and std
     mean_track[mean_track==0]=np.nan
@@ -236,8 +214,10 @@ def _remove_outliers(track):
         return fixed
     
     idx = np.arange(N) + np.arange(len(mean_track)-N)[:,None]
-    std_track = np.nanstd(mean_track[idx],axis=1)
-    mean_track = np.nanmedian(mean_track[idx],axis=1)
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'All-NaN (slice|axis) encountered')
+        std_track = np.nanstd(mean_track[idx],axis=1)
+        mean_track = np.nanmedian(mean_track[idx],axis=1)
     
     std_track = np.pad(std_track, N//2,'edge')
     mean_track = np.pad(mean_track, N//2,'edge')
@@ -259,9 +239,10 @@ def _remove_bias(spec, max_hz=None, percentile = 5):
     threshold = np.percentile(e, percentile)
     indices = np.where(e <= threshold)
     bias_spectrum = np.mean(spec[indices, :max_hz], axis=1).flatten()
+    bias_spectrum = _smooth(bias_spectrum, 20)
     mean_val = np.mean(bias_spectrum)
     spec[:, :max_hz] -= bias_spectrum
-    spec[:, :max_hz] +=mean_val
+    #spec[:, :max_hz] +=mean_val
     return spec
 
    
@@ -301,9 +282,9 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
     SPEC_SLOPE = 1.25 #25   # adjusting slope steeper will emphasize lower harmonics
-    ACORR_WEIGHT = 3.    #
-    VITERBI_PENALTY = 1*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
-    MIN_VAL = 1.0e-6
+    ACORR_WEIGHT = 2.5    #
+    VITERBI_PENALTY = 1.5*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
+    MIN_VAL = 1.0e-5
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
     orig_sr = librosa.get_samplerate(utt_wav)
@@ -446,7 +427,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
 
     # fill unvoiced gaps and postprocess 
 
-    track = _remove_outliers(track)
+    #track = _remove_outliers(track)
     unvoiced_frames[track==0] = True
     interp_track = _interpolate_zeros(track, method='akima')
     interp_track = scipy.signal.medfilt(interp_track, 5)
