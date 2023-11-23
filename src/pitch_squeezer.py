@@ -9,7 +9,7 @@ import scipy.signal
 import scipy.interpolate
 import librosa
 import matplotlib.pyplot as plt
-
+plt.rcParams.update({'font.size': 10})
 
 def f0_cwt(f0_interp, plot=False):
     """
@@ -152,6 +152,46 @@ def _construct_window(mean_hz, bins_per_hz):
     window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
     return window
 
+def _apply_varying_window(spec, unvoiced_frames, min_hz=50, max_hz=500, bins_per_hz=1):
+    
+    N = 100
+    
+    pitch = _get_max_track(spec, unvoiced_frames, min_hz*bins_per_hz, max_hz*bins_per_hz)
+   
+    
+    #pitch = _interpolate_zeros(pitch, 'akima')
+    if len(pitch) < N:
+        window = _construct_window(np.mean(pitch), bins_per_hz)
+        spec[:,:len(window)]*= window
+        return spec
+    pitch = scipy.signal.medfilt(pitch, 7)
+    pitch[pitch==0] = np.nan
+    std = np.nanstd(pitch)
+    idx = np.arange(N) + np.arange(len(pitch)-N)[:,None]
+    mean_track = np.nanmedian(pitch[idx],axis=1)
+    std_track = np.nanstd(pitch[idx],axis=1)
+    std_track = np.pad(std_track, N//2,'edge')
+    mean_track = np.pad(mean_track, N//2,'edge')
+    #mean_track = _smooth(mean_track, 50).astype('int')
+    mean_track[mean_track<min_hz]=min_hz
+    mean_track[np.isnan(mean_track)]=min_hz
+    std_track = _smooth(std_track, 50)
+    std_track[:] = std
+    """
+    plt.plot(pitch)
+    plt.plot(mean_track)
+    plt.plot(mean_track-1*std_track)
+    plt.plot(mean_track+2*std_track)
+    plt.show()
+    """
+    for i in range(0, spec.shape[0]):
+        l_window = scipy.signal.windows.gaussian(int(mean_track[i]*2.),std_track[i]*1.5)
+        r_window = scipy.signal.windows.gaussian(int(max_hz-mean_track[i])*2, std_track[i]*1.5)
+        window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
+        spec[i,:len(window)]*=window #+np.mean(spec[i,:max_hz])
+        
+    return spec
+
 def _add_slope(spec, min_hz=50, max_hz=500, steepness=1.):
     orig_energy = np.sum(spec[:,min_hz:max_hz])
     #increasing spectral slope, in order to make fundamental stand out more
@@ -261,8 +301,8 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
     SPEC_SLOPE = 1.25 #25   # adjusting slope steeper will emphasize lower harmonics
-    ACORR_WEIGHT = 2.    #
-    VITERBI_PENALTY = 0.5*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
+    ACORR_WEIGHT = 3.    #
+    VITERBI_PENALTY = 1*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-6
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
@@ -373,11 +413,12 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     mean_pitch = np.median(np.argmax(pic[voiced_frames, min_hz_bin:max_hz_bin], axis=1))+min_hz_bin
   
     window = _construct_window(mean_pitch, BINS_PER_HZ)
-    pic[:, :len(window)]*=window
+    pic = _apply_varying_window(pic, unvoiced_frames, min_hz, max_hz, BINS_PER_HZ)
+    #pic[:, :len(window)]*=window
     #pic[pic<MIN_VAL] = MIN_VAL
 
     if plot:
-        _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[4], title="+window around median pitch")
+        _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[4], title="+window around running mean + std ")
     
 
     # narrow search space between observed min and max
@@ -537,8 +578,8 @@ def main():
     if args.plot:
         import signal
         signal.signal(signal.SIGINT, signal.SIG_DFL)
-        #import random
-        #random.shuffle(input_files)
+        import random
+        random.shuffle(input_files)
         for f in input_files:
             print("analyzing "+f+".  (ctrl-c to quit.)")
             os.system("play -q "+f+ "&")
