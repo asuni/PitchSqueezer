@@ -180,15 +180,39 @@ def _summation(spec, min_hz, max_hz):
 def _remove_outliers(track):
     fixed = np.array(track)
     mean_track = scipy.signal.medfilt(track, 31)
+    
+    """
     try:
         mean_track = _interpolate_zeros(track, 'linear')
     except:
         return fixed
-    mean_track = _smooth(mean_track, 600)
-    fixed[fixed<mean_track*0.75]=0 
+    """
+   
+    #mean_track = _smooth(mean_track, N)
+    #calc running mean and std
+    mean_track[mean_track==0]=np.nan
+    N = 200
+    if len(fixed) <= N*2:
+        return fixed
+    
+    idx = np.arange(N) + np.arange(len(mean_track)-N)[:,None]
+    std_track = np.nanstd(mean_track[idx],axis=1)
+    mean_track = np.nanmedian(mean_track[idx],axis=1)
+    
+    std_track = np.pad(std_track, N//2,'edge')
+    mean_track = np.pad(mean_track, N//2,'edge')
+    fixed[fixed<mean_track-2.5*std_track]=0 
+   
+    if 1==2 and not np.array_equal(fixed,track):
+        plt.plot(mean_track)
+        plt.plot(mean_track+std_track*4., color="black",linestyle="dashed")
+        plt.plot(mean_track-std_track*2., color="black",linestyle="dashed")
+        plt.plot(track)
+        plt.plot(fixed)
+        plt.show()
     return fixed
 
-def _remove_bias(spec, max_hz=500, percentile = 5):
+def _remove_bias(spec, max_hz=None, percentile = 5):
     if max_hz is None:
         max_hz = spec.shape[1]
     e = np.sum(spec[:,:max_hz], axis=1)
@@ -238,7 +262,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
     SPEC_SLOPE = 1.25 #25   # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 2.    #
-    VITERBI_PENALTY = 2.*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
+    VITERBI_PENALTY = 0.5*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-6
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
@@ -400,7 +424,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     unvoiced_frames = _apply_target_rate(unvoiced_frames.astype('int'), INTERNAL_RATE, n_target_frames).astype('bool')
     track[unvoiced_frames] = 0 # if the iterpolation has smoothed track
 
-    if plot:# or 1==1:
+    if plot: # or 1==1:
         plt.figure(figsize=(12,4))
         if frame_rate == INTERNAL_RATE:
             plt.imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
@@ -518,7 +542,7 @@ def main():
         for f in input_files:
             print("analyzing "+f+".  (ctrl-c to quit.)")
             os.system("play -q "+f+ "&")
-            f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=False)
+            f0, if0 = track_pitch(f,args.min_hz, args.max_hz, args.voicing_thresh, args.frame_rate, plot=True)
             if args.wavelet:
                 f0_cwt(if0, plot=True)
                 #f0_cwt(np.log(if0), plot=True)
