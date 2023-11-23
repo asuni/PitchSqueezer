@@ -188,6 +188,19 @@ def _remove_outliers(track):
     fixed[fixed<mean_track*0.75]=0 
     return fixed
 
+def _remove_bias(spec, max_hz=None, percentile = 5):
+    if max_hz is None:
+        max_hz = spec.shape[1]
+    e = np.sum(spec[:,:max_hz], axis=1)
+    threshold = np.percentile(e, percentile)
+    indices = np.where(e <= threshold)
+    bias_spectrum = np.mean(spec[indices, :max_hz])
+    mean_val = np.mean(bias_spectrum)
+    spec[:, :max_hz] -= bias_spectrum
+    spec[:, :max_hz] +=mean_val
+    return spec
+
+   
 def _plt(spec, uv_frames, min=0, max=500, ax=None, title=""):
     ax.imshow(np.log(spec[:,int(min):int(max)]).T, aspect="auto", origin="lower",cmap="viridis")
     ax.plot(_get_max_track(spec, uv_frames, max_hz=max), color="white", linestyle="dotted")
@@ -226,7 +239,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     SPEC_SLOPE = 1.25 #25   # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 3.    #
     VITERBI_PENALTY = 2.*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
-    MIN_VAL = 1.0e-15
+    MIN_VAL = 1.0e-6
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
     orig_sr = librosa.get_samplerate(utt_wav)
@@ -243,7 +256,9 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     sig = librosa.resample(sig, orig_sr=orig_sr, target_sr=SR)
     sig = _hp_filter(sig, cutoff_frequency=min_hz)
     sig = (sig-np.mean(sig)) / np.std(sig) 
-    
+   
+    # dither
+    sig+=0.01*np.random.normal(size=len(sig))
     # do ffts on the signal
     frame_shift = int(SR//INTERNAL_RATE)
     ssq_fft ,fft2, *_ = ssq_stft(sig ,n_fft = int(SR*BINS_PER_HZ), win_len=int(SR/4),hop_len=frame_shift)
@@ -266,6 +281,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     
     pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,1*BINS_PER_HZ])
     #pic = short_win_fft #scipy.ndimage.gaussian_filter(short_win_fft,[1,1*BINS_PER_HZ])
+    pic[:,:] = _remove_bias(pic[:,:])
     pic[pic<MIN_VAL] = MIN_VAL
 
     if plot:
@@ -285,8 +301,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     for i in range(-3,3):
         pic[np.arange(pic.shape[0]), acorr_f0+i] += acorr1[np.arange(pic.shape[0]), acorr_f0+i]*ACORR_WEIGHT
     
-   
-    
+
     # voicing decision from autocorrelation, short window fft (and harmonic sum <- no, redundant with acorr)
 
     e1 = np.log(np.sum(acorr1, axis=1)+1.)
@@ -314,6 +329,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     # multiply spec with the whole correlogram, suppresses non-harmonic stuff
     
     pic[:, :length] *=acorr1
+    pic = (pic-np.min(pic))/np.ptp(pic)
     if plot:
 
         ax[2].plot(voicing_strength*50, "black", alpha=0.3)
@@ -331,8 +347,10 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
 
     # softy constrain the hypothesis space by windowing around initial median estimate
     mean_pitch = np.median(np.argmax(pic[voiced_frames, min_hz_bin:max_hz_bin], axis=1))+min_hz_bin
+  
     window = _construct_window(mean_pitch, BINS_PER_HZ)
     pic[:, :len(window)]*=window
+    #pic[pic<MIN_VAL] = MIN_VAL
 
     if plot:
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[4], title="+window around median pitch")
@@ -343,9 +361,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     min_freq,max_freq = np.min(raw_f0), np.max(raw_f0)
     scales = np.arange(min_freq, max_freq, 1)
     scales = _hz_to_semitones(scales, min_freq)
-    # if signal is hi-pass filtered, viterbi will drift to high freqs during unvoiced parts; add a small bias
-    pic[unvoiced_frames, int(mean_pitch)]+=.0001
-    pic[pic<MIN_VAL] = MIN_VAL
+
     
     # viterbi search for the best path
     track = extract_ridges(pic[:,min_freq:max_freq].T,scales, penalty=VITERBI_PENALTY, n_ridges=1, transform="fft")  
