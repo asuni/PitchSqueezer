@@ -144,13 +144,18 @@ def _apply_target_rate(pitch_track, old_frame_rate, n_target_points):
 
 # if frame has energy at 1/2 or 1/3 of the max pitch candidate, move energy there
 
-def _stack_f0(spec, min_hz, max_hz):
-    #max_i= np.argmax(spec[:, min_hz:max_hz], axis=1)+min_hz
-    max_i= np.argmax(spec[:, min_hz:max_hz], axis=1)+min_hz 
+def _stack_f0(spec, voiced_frames, min_hz, max_hz):
+    max_i= np.argmax(spec[:, min_hz:max_hz], axis=1)+min_hz
+    max_vals = np.log(spec[np.arange(spec.shape[0]), max_i])
+    mag_mean= np.mean(max_vals[voiced_frames])
+    mag_std= np.std(max_vals[voiced_frames])
+    max_i[np.invert(voiced_frames)]=0
+    threshold = mag_mean-mag_std
     for i in range(0, spec.shape[0]):
         cand = max_i[i]
-        if cand > 2*min_hz and spec[i, int(cand//2)] > spec[i, cand] * 0.1:
-            spec[i, int(cand/2.)]+=spec[i, cand]
+        if cand > 2*min_hz:
+            if np.log(spec[i,int(cand/2)]) > threshold or spec[i, int(cand/2)] > spec[i, cand] * 0.2:
+                spec[i, int(cand/2)]+=spec[i, cand]
     return spec
 
 def _construct_window(mean_hz, bins_per_hz):
@@ -161,24 +166,19 @@ def _construct_window(mean_hz, bins_per_hz):
     window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
     return window
 
-def _apply_varying_window(spec, unvoiced_frames, min_hz=50, max_hz=500, bins_per_hz=1):
-    
-    N = 100
-    
+def _apply_varying_window(spec, unvoiced_frames, win_mul = 1.5, min_hz=50, max_hz=500, bins_per_hz=1):
+        
     pitch = _get_max_track(spec, unvoiced_frames, min_hz*bins_per_hz, max_hz*bins_per_hz)
-    orig_pitch = np.array(pitch)
     pitch[pitch==0] = np.nan
     pitch = scipy.signal.medfilt(pitch,5)
     std = np.nanstd(pitch)
     pitch = _interpolate_zeros(pitch, 'linear')
-    
-    #pitch = scipy.signal.medfilt(pitch,11)
     pitch = _smooth(pitch, 30)
         
     for i in range(0, spec.shape[0]):
       
-        l_window = scipy.signal.windows.gaussian(int(pitch[i]*2.),std*1)
-        r_window = scipy.signal.windows.gaussian(int(max_hz-pitch[i]+1)*2, std*1.)
+        l_window = scipy.signal.windows.gaussian(int(pitch[i]*2.),std*win_mul)
+        r_window = scipy.signal.windows.gaussian(int(max_hz-pitch[i]+1)*2, std*win_mul)
         window = np.concatenate((l_window[:len(l_window)//2], r_window[len(r_window)//2:]))
         spec[i,:len(window)]*=window+np.mean(spec[i,:max_hz])
         
@@ -209,7 +209,6 @@ def _get_viterbi_track(spec, voiced_frames = [], min_hz_bin=50, max_hz_bin=500, 
     scales = np.arange(min_hz_bin, max_hz_bin, subsample)
     scales = _hz_to_semitones(scales, min_hz_bin)
    
-  
     # forward-backward search, optional speed up by decimating the spectrogram
     if subsample > 1:
         spec_sub = spec[:,::subsample].copy()
@@ -221,36 +220,27 @@ def _get_viterbi_track(spec, voiced_frames = [], min_hz_bin=50, max_hz_bin=500, 
     
     track = np.array(track).astype('float').flatten()*subsample+(min_hz_bin*subsample)
     
-
-    
     return track
 
 
 
-def _summation(spec, min_hz, max_hz):
-    spec = librosa.power_to_db(spec,ref=np.mean(spec))
-    summogram = np.zeros(spec[:, :max_hz].shape)
-    freq_range = np.arange(min_hz, max_hz)
-    for k in range(1, 3):
-        bin_indices = freq_range * k
-        summogram[:, freq_range] += spec[:, bin_indices] # - spec[:, (bin_indices - 0.5).astype(int)]
-   
-    energy = np.sum(summogram[:,min_hz:max_hz], axis=1)
-    return energy
 
-def _remove_outliers(track):
+
+def _remove_outliers(pitch):
+  
+   
     import warnings
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', r'All-NaN (slice|axis) encountered')
-    fixed = np.array(track)
-    mean_track = scipy.signal.medfilt(track, 31)
-    mean_track[np.isnan(mean_track)] = 0
-    #mean_track = _smooth(mean_track, N)
+   
+    mean_track = scipy.signal.medfilt(pitch, 5)
+   
     #calc running mean and std
     mean_track[mean_track==0]=np.nan
-    N = 200
-    if len(fixed) <= N*2:
-        return fixed
+    N = 100
+    if N > len(pitch)/2:
+        #N = int(len(fixed)//4)
+        return pitch
     
     idx = np.arange(N) + np.arange(len(mean_track)-N)[:,None]
     with warnings.catch_warnings():
@@ -260,9 +250,18 @@ def _remove_outliers(track):
         mean_track = np.nanmedian(mean_track[idx],axis=1)
     
     std_track = np.pad(std_track, N//2,'edge')
+    std_track = np.std(pitch[pitch>0])
     mean_track = np.pad(mean_track, N//2,'edge')
-    fixed[fixed<mean_track-2.*std_track]=0 
-    return fixed
+    #mean_track = _smooth(mean_track, 10)
+    pitch[pitch<mean_track-std_track*2.5] = 0 #std_track*2]=0.
+    pitch[pitch>mean_track+std_track*6]=0. 
+    """
+    plt.plot(pitch)
+    plt.plot(mean_track-std_track*2.5)
+    plt.plot(mean_track+std_track*4)
+    plt.show()
+    """
+    return pitch
 
 def _remove_bias(spec, max_hz=None, percentile = 5):
     if max_hz is None:
@@ -271,18 +270,49 @@ def _remove_bias(spec, max_hz=None, percentile = 5):
     threshold = np.percentile(e, percentile)
     indices = np.where(e <= threshold)
     bias_spectrum = np.mean(spec[indices, :max_hz], axis=1).flatten()
-    #bias_spectrum = _smooth(bias_spectrum, 20)
+    bias_spectrum = _smooth(bias_spectrum, 20)
     mean_val = np.mean(bias_spectrum)
     spec[:, :max_hz] -= bias_spectrum
     return spec
+
+
+def _smooth_voicing(voicing_arr, min_duration=5):
+    changes = np.concatenate(([0], np.diff(voicing_arr), [0]))
+    change_indices = np.nonzero(changes)[0]
+    durations = np.diff(change_indices)
+    short_segments = durations < min_duration
+    for i in np.where(short_segments)[0]:
+        voicing_arr[change_indices[i]:change_indices[i + 1]] = voicing_arr[change_indices[i - 1]]
+    return voicing_arr
+
+
+def _get_voicing(acorr1, short_win_fft, pic, min_hz_bin, max_hz_bin, voicing_thresh):
+  
+    e1 = _norm(np.log(np.sum(acorr1, axis=1)+1.))
+    e2 = _norm(np.log(np.sum(short_win_fft[:,min_hz_bin:max_hz_bin], axis=1)+1.))
+    e3 = _norm(np.log(np.max(pic[:,min_hz_bin:max_hz_bin], axis=1)+0.0001) - \
+        np.log(np.median(pic[:,min_hz_bin:max_hz_bin], axis=1)+0.0001))
+   
+    voicing_strength = e1*0.5+e2+e3
+    voicing_strength-=np.percentile(voicing_strength, 10)
+    voicing_strength[voicing_strength<0] = 0
+    unvoiced_frames  = voicing_strength < voicing_thresh
+    
+    #unvoiced_frames = _smooth_voicing(unvoiced_frames, 3)
+    unvoiced_frames = scipy.signal.medfilt(unvoiced_frames.astype('int'), 5).astype('bool')
+    
+    voiced_frames =  np.invert(unvoiced_frames)
+    return voicing_strength, voiced_frames, unvoiced_frames
 
 def _norm(params):
     return (params-np.min(params))/np.ptp(params)
 
 def _plt(spec, uv_frames, min=0, max=500, ax=None, title=""):
     ax.imshow(np.log(spec[:,int(min):int(max)]).T, aspect="auto", origin="lower",cmap="viridis",interpolation="None")
-    ax.plot(_get_max_track(spec, uv_frames, max_hz=max), color="white", linestyle="dotted")
-    ax.set_title(title, loc="left", x=0.02, y=0.7, color="white")
+    track = _get_max_track(spec, uv_frames, max_hz=max).astype('float')
+    track[uv_frames]=np.nan
+    ax.plot(track, color="white", linestyle="dotted")
+    ax.set_title(title, loc="left", x=0.02, y=0.0, color="white")
 
 
 # main function
@@ -315,13 +345,30 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
-    SPEC_SLOPE = 1.25 #25   # adjusting slope steeper will emphasize lower harmonics
-    ACORR_WEIGHT = 1.    #
-    VITERBI_PENALTY = 1.*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
-    MIN_VAL = 1.0e-5
+    SPEC_SLOPE = 1.25     # adjusting slope steeper will emphasize lower harmonics
+    ACORR_WEIGHT = 2.    #
+    VITERBI_PENALTY = 3.*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
+    MIN_VAL = 1.0e-6
+    SOFT_WINDOW_STD = 1.5     # stds. determines how tightly the spectrum is filtered around running mean
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
     orig_sr = librosa.get_samplerate(utt_wav)
+   
+    # maybe add presets for different purposes or styles
+    # preset F0, or gci-style with local detail
+    # viterbi=False
+    # INTERNAL_RATE =200
+    # SPEC_SLOPE 1.5
+    # ACORR_WEIGHT 3.
+    # SOFT_WINDOW_STD 2.
+
+    # preset PITCH, smooth perception oriented track
+    # viterbi=true
+    # INTERNAL_RATE =100
+    # ACORR_WEIGHT  3
+    # SPEC_SLOPE  1.25
+    # VITERBI_PENALTY  3 * ... 
+    # SOFT_WINDOW_STD  1
 
     # get integer ratio between original and internal sample rate to avoid rounding problems
     # actually no, then frame_shift will cause rounding issues with 100 frames / s
@@ -337,7 +384,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     sig = (sig-np.mean(sig)) / np.std(sig) 
    
     # dither
-    sig+=0.01*np.random.normal(size=len(sig))
+    sig+=0.001*np.random.normal(size=len(sig))
     #  stfts on the signal
     frame_shift = int(SR//INTERNAL_RATE)
     ssq_fft ,fft2, *_ = ssq_stft(sig ,n_fft = int(SR*BINS_PER_HZ), win_len=int(SR/4),hop_len=frame_shift)
@@ -355,7 +402,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
 
     # pic will be our time-frequency image that is manipulated by subsequent 
     # methods to make fundamental frequency stand out in the spectra
-    pic = scipy.ndimage.gaussian_filter(ssq_fft,[1,1*BINS_PER_HZ])
+    pic = scipy.ndimage.gaussian_filter(ssq_fft,[1.,1*BINS_PER_HZ])
     pic = _remove_bias(pic)
     pic[pic<MIN_VAL] = MIN_VAL
 
@@ -369,63 +416,46 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     # add strongest autocorrelation frequency to spec, helps with weak or missing fundamental
     # add bias toward lower peaks
  
-    acorr1[:, :max_hz_bin] *= np.linspace(1.25, 0.75, max_hz_bin) #acorr1.shape[1])
-    if viterbi:
-        acorr_f0 = _get_viterbi_track(acorr1, min_hz_bin=min_hz_bin, max_hz_bin=max_hz_bin, penalty=.25, subsample=4)
+    #acorr1[:, :max_hz_bin] *= np.linspace(1.5, 0.5, max_hz_bin) #acorr1.shape[1])
+    if viterbi:# or 1==1:
+        acorr_f0 = _get_viterbi_track(acorr1, min_hz_bin=min_hz_bin, max_hz_bin=max_hz_bin, penalty=.5, subsample=4)
     else:
-        acorr_f0 = np.argmax(acorr1[:, min_hz_bin:max_hz_bin], axis=1)+min_hz_bin
-    #ax[2].plot(acorr_f0_max)
-    #ax[2].plot(acorr_f0, linewidth=3)
+        acorr_f0 = np.argmax(acorr1[:, min_hz_bin:max_hz_bin], axis=1)+min_hz_bin    
     acorr_f0 = acorr_f0.astype('int')
-    #acorr_f0 = scipy.signal.medfilt(acorr_f0, 3)
+
     for i in range(-3,3):
         pic[np.arange(pic.shape[0]), acorr_f0+i] += acorr1[np.arange(pic.shape[0]), acorr_f0+i]*ACORR_WEIGHT
     
-    
-
-
     # estimate voicing strength 
     # from autocorrelation, short window fft, 
     # and difference between max freq band and median of bands
-    e1 = _norm(np.log(np.sum(acorr1, axis=1)+1.))
-    e2 = _norm(np.log(np.sum(short_win_fft[:,min_hz_bin:max_hz_bin], axis=1)+1.))
-    e3 = _norm(np.log(np.max(pic[:,min_hz_bin:max_hz_bin], axis=1)+0.0001) - \
-        np.log(np.median(pic[:,min_hz_bin:max_hz_bin], axis=1)+0.0001))
-    
+    voicing_strength, voiced_frames, unvoiced_frames = \
+        _get_voicing(acorr1, short_win_fft, pic, min_hz_bin, max_hz_bin, voicing_thresh)
    
-    #voicing_strength = e1+e2*0.5+e3
-    voicing_strength = e1*0.5+e2+e3
     
     # multiply spec with the whole correlogram, suppresses non-harmonic stuff
     pic[:, :length] *=acorr1
     
-    pic = (pic-np.min(pic))/np.ptp(pic)
-
-    # remove background noise floor
-    voicing_strength-=np.percentile(voicing_strength, 10)
-    voicing_strength[voicing_strength<0] = 0
-    unvoiced_frames  = voicing_strength < voicing_thresh
-    # remove short sections
-    unvoiced_frames = scipy.signal.medfilt(unvoiced_frames.astype('int'), 5).astype('bool')
-    voiced_frames =  np.invert(unvoiced_frames)
+   
     
+   
     if plot:
         ax[2].plot(voicing_strength*50, "black", alpha=0.3)
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
+        ax[2].plot(acorr_f0)
 
-
-
+    
     # dampen higher frequencies to reduce octave jumps up
     pic = _add_slope(pic, min_hz=0, max_hz=max_hz_bin, steepness=SPEC_SLOPE)
     
     # reassign energy from h2 to h1
-    pic = _stack_f0(pic, min_hz_bin, max_hz_bin)
+    pic = _stack_f0(pic, voiced_frames, min_hz_bin, max_hz_bin)
    
     if plot:
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[3], title="+skew spectrum + harmonic reassignment")
         
     # softy constrain the hypothesis space by windowing around current pitch trajectory 
-    pic = _apply_varying_window(pic, unvoiced_frames, min_hz, max_hz, BINS_PER_HZ)
+    pic = _apply_varying_window(pic, unvoiced_frames, SOFT_WINDOW_STD, min_hz, max_hz, BINS_PER_HZ)
    
     if plot:
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[4], title="+window around running mean + std ")
@@ -434,7 +464,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
         track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=1)
     else:
         track =_get_max_track(pic, unvoiced_frames, min_hz, max_hz).astype('float')
-   
+        track = scipy.signal.medfilt(track, 5)
     track[unvoiced_frames] = 0
     if np.all(track == 0):
         print(utt_file+" all unvoiced!.")
