@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 
 
-plt.rcParams.update({'font.size': 10})
+plt.rcParams.update({'font.size': 6})
 
 
 
@@ -150,7 +150,7 @@ def _stack_f0(spec, voiced_frames, min_hz, max_hz):
     mag_mean= np.mean(max_vals[voiced_frames])
     mag_std= np.std(max_vals[voiced_frames])
     max_i[np.invert(voiced_frames)]=0
-    threshold = mag_mean-mag_std
+    threshold = mag_mean-mag_std*0.5
     for i in range(0, spec.shape[0]):
         cand = max_i[i]
         if cand > 2*min_hz:
@@ -226,6 +226,55 @@ def _trim_voice_boundaries(arr, n):
     
     return trimmed
 
+def _process_outliers(pic, pitch, mode="shift"):
+  
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'All-NaN (slice|axis) encountered')
+    mean_track = _trim_voice_boundaries(pitch, 2)
+  
+    mean_track = scipy.signal.medfilt(mean_track, 5)
+
+    #calc running mean and std
+    mean_track[mean_track==0]=np.nan
+    N = 100
+    if N > len(pitch)/2:
+        #N = int(len(fixed)//4)
+        return pic, pitch
+   
+    idx = np.arange(N) + np.arange(len(mean_track)-N)[:,None]
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'All-NaN (slice|axis) encountered')
+        warnings.filterwarnings('ignore', r'Degrees of freedom <= 0 for slice.')
+        mean_track = np.nanmedian(mean_track[idx],axis=1)
+
+    #mean_track = scipy.signal.medfilt(mean_track, 31)
+    mean_track = np.pad(mean_track, N//2,'edge')
+    mean_track = _interpolate_zeros(mean_track, 'linear')
+    mean_track = _smooth(mean_track, 50)
+    mean_track[pitch==0] = 0
+   
+    if mode == "remove":
+        pitch[pitch<mean_track*0.6]=0
+        pitch[pitch>mean_track*1.9]=0 
+    elif mode == "shift":
+        """
+        plt.plot(pitch)
+        plt.plot(mean_track)
+        plt.plot(mean_track*0.75, linestyle="dashed")
+        plt.plot(mean_track*1.5, linestyle="dashed")
+        plt.show()
+        print(pic.shape)
+        """
+        cond1 = pitch < (mean_track * 0.6)
+        cond2 = pitch > mean_track * 1.8
+      
+        #pic[cond1, (pitch[cond1]).astype('int')]*=0 #0.01 #10 #pitch[cond1]*0.1
+        #pic[cond2, (pitch[cond2]).astype('int')]*=0 #.01 #10 #=pitch[cond2]*0.1
+        pic[cond1, (pitch[cond1]*2).astype('int')]*=50000 #pitch[cond1]*0.1
+        pic[cond2, (pitch[cond2]/2).astype('int')]*=50000 #pitch[cond2]*0.1 #10 #=pitch[cond2]*0.1
+        print(pic.shape)
+    return pic, pitch
 
 def _remove_outliers(pitch, mode="remove"):
   
@@ -253,10 +302,7 @@ def _remove_outliers(pitch, mode="remove"):
     mean_track = np.pad(mean_track, N//2,'edge')
     mean_track = _interpolate_zeros(mean_track, 'linear')
     mean_track = _smooth(mean_track, 50)
-    #plt.plot(pitch)
-    #plt.plot(mean_track)
-    #plt.plot(mean_track*0.6)
-    #plt.plot(mean_track*1.9)
+
     if mode == "remove":
         pitch[pitch<mean_track*0.6]=0
         pitch[pitch>mean_track*1.9]=0 
@@ -264,9 +310,6 @@ def _remove_outliers(pitch, mode="remove"):
         for i in range(2):
             pitch[pitch<mean_track*0.55]*=2 #std_track*2]=0.
             pitch[pitch>mean_track*1.95]/=2
-   
-    #plt.plot(pitch)  
-    #plt.show() 
     return pitch
 
 def _remove_bias(spec, max_hz=None, percentile = 5):
@@ -339,15 +382,16 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
-    SPEC_SLOPE = 1.5     # adjusting slope steeper will emphasize lower harmonics
+    SPEC_SLOPE = 1.25     # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 1.5    #
-    VITERBI_PENALTY = 2.*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
+    VITERBI_PENALTY = 2*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-5
     SOFT_WINDOW_STD = 1.5     # stds. determines how tightly the spectrum is filtered around running mean
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
     orig_sr = librosa.get_samplerate(utt_wav)
-
+    #viterbi=True
+    outlier_removal=True
     # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
     sig, orig_sr = librosa.load(utt_wav, sr=None)
     orig_sig_len = len(sig) # needed for target frame rate conversion
@@ -427,6 +471,10 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     
     # get final pitch track
     if viterbi:
+        track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=2)
+        track[unvoiced_frames]= 0
+        #ax[5].plot(track, color="red") #, linestyle="dotted")
+        pic, track = _process_outliers(pic,track.astype('float'), mode="shift")
         track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=1)
         track = track.astype('float')
     else:
@@ -441,19 +489,20 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     if plot:
         ax[5].imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
         ax[5].plot(track, color="white") #, linestyle="dotted")
-        ax[5].set_title("+viterbi", loc="left",x=0.02, y=0.7, color="white")
+        ax[5].set_title("+viterbi", loc="left",x=0.02, y=0., color="white")
         plt.show()
 
  
     # fill unvoiced gaps and postprocess 
-    
-    track = _remove_outliers(track, mode="shift")
+    if outlier_removal:
+        track = _remove_outliers(track, mode="remove")
     unvoiced_frames[track==0] = True
     interp_track = _trim_voice_boundaries(track, 1)
     interp_track = _interpolate_zeros(interp_track, method='akima')
     interp_track = scipy.signal.medfilt(interp_track, 3)
     interp_track = _smooth(interp_track, 3)
-
+    track = np.array(interp_track)
+    track[unvoiced_frames] = 0
     # convert to target frame rate         
     n_target_frames = np.floor(orig_sig_len/(orig_sr//frame_rate)+1.).astype('int')
     track = _apply_target_rate(track, INTERNAL_RATE, n_target_frames)
@@ -464,13 +513,18 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     if plot:
         plt.figure(figsize=(12,4))
         if frame_rate == INTERNAL_RATE:
-            ssq_fft = scipy.ndimage.gaussian_filter(ssq_fft,[0.5,1*BINS_PER_HZ])
-            plt.imshow(np.log(ssq_fft[:,:max_hz_bin*2]+MIN_VAL).T, aspect="auto", origin="lower")
-        plt.plot(interp_track, linestyle="dotted", color="white")
+            ssq_fft = scipy.ndimage.gaussian_filter(ssq_fft,[1,1*BINS_PER_HZ])
+            plt.imshow(np.log(ssq_fft[:,:max_hz_bin]+MIN_VAL).T, aspect="auto", origin="lower")
+        plt.plot(interp_track, linestyle="dotted", color="white",alpha=0.5)
         plot_track = np.array(track)
         plot_track[track==0] = np.nan
-        plt.plot(plot_track, color="white", label="squeezer")
-        plt.plot(voicing_strength*50, color="yellow",label="voicing_strength")
+
+        y, sr = librosa.load(utt_wav, sr=None)
+        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/frame_rate))
+        ax[5].plot(f0_pyin*BINS_PER_HZ, color="red", label="pyin",linestyle="dotted")
+        ax[5].legend()
+        plt.plot(plot_track, color="white", label="squeezer")#,linestyle="dotted")
+        #plt.plot(voicing_strength*50, color="yellow",label="voicing_strength")
         plt.legend()
         plt.show()
 
