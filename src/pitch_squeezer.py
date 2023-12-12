@@ -267,12 +267,12 @@ def _process_outliers(pic, pitch, mode="shift"):
         print(pic.shape)
         """
         cond1 = pitch < (mean_track * 0.6)
-        cond2 = pitch > mean_track * 1.8
+        cond2 = pitch > mean_track * 1.9
       
         #pic[cond1, (pitch[cond1]).astype('int')]*=0 #0.01 #10 #pitch[cond1]*0.1
         #pic[cond2, (pitch[cond2]).astype('int')]*=0 #.01 #10 #=pitch[cond2]*0.1
-        pic[cond1, (pitch[cond1]*2).astype('int')]*=50000 #pitch[cond1]*0.1
-        pic[cond2, (pitch[cond2]/2).astype('int')]*=50000 #pitch[cond2]*0.1 #10 #=pitch[cond2]*0.1
+        pic[cond1, (pitch[cond1]*2).astype('int')]*=10 #pitch[cond1]*0.1
+        pic[cond2, (pitch[cond2]/2).astype('int')]*=10 #pitch[cond2]*0.1 #10 #=pitch[cond2]*0.1
         print(pic.shape)
     return pic, pitch
 
@@ -305,7 +305,7 @@ def _remove_outliers(pitch, mode="remove"):
 
     if mode == "remove":
         pitch[pitch<mean_track*0.6]=0
-        pitch[pitch>mean_track*1.9]=0 
+        pitch[pitch>mean_track*2.5]=0 
     elif mode == "shift":
         for i in range(2):
             pitch[pitch<mean_track*0.55]*=2 #std_track*2]=0.
@@ -382,21 +382,22 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
-    SPEC_SLOPE = 1.25     # adjusting slope steeper will emphasize lower harmonics
+    SPEC_SLOPE = 1.5     # adjusting slope steeper will emphasize lower harmonics
     ACORR_WEIGHT = 1.5    #
-    VITERBI_PENALTY = 2*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
-    MIN_VAL = 1.0e-5
+    VITERBI_PENALTY = 3*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
+    MIN_VAL = 1.0e-6
     SOFT_WINDOW_STD = 1.5     # stds. determines how tightly the spectrum is filtered around running mean
     min_hz_bin = int(min_hz * BINS_PER_HZ)
     max_hz_bin = int(max_hz * BINS_PER_HZ)
     orig_sr = librosa.get_samplerate(utt_wav)
-    #viterbi=True
+   
     outlier_removal=True
+
     # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
     sig, orig_sr = librosa.load(utt_wav, sr=None)
     orig_sig_len = len(sig) # needed for target frame rate conversion
     sig = librosa.resample(sig, orig_sr=orig_sr, target_sr=SR)
-    sig -=np.mean(sig)
+    
     sig = _hp_filter(sig, cutoff_frequency=min_hz-10)
     sig = (sig-np.mean(sig)) / np.std(sig) 
    
@@ -405,7 +406,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
 
     #  stfts on the signal
     frame_shift = int(SR//INTERNAL_RATE)
-    ssq_fft ,fft2, *_ = ssq_stft(sig ,n_fft = int(SR*BINS_PER_HZ), win_len=int(SR/3),hop_len=frame_shift)
+    ssq_fft ,fft2, *_ = ssq_stft(sig ,n_fft = int(SR*BINS_PER_HZ), win_len=int(SR/4),hop_len=frame_shift)
     ssq_fft = abs(ssq_fft).T # personal preference for (time, hz) shape
     short_win_fft, short_win_fft2,*_ = ssq_stft(sig, n_fft=int(SR*BINS_PER_HZ),win_len=int(SR/20),hop_len=frame_shift)
     short_win_fft = abs(short_win_fft).T
@@ -426,14 +427,14 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     if plot:
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[1], title="synchro-squeezing")
 
+    # frequency domain autocorrelation, up to 3 * max_hz to capture at least 3 harmonics
     length = min(max_hz_bin*3,int(SR*BINS_PER_HZ/2))
     acorr1 = librosa.autocorrelate(pic[:,:length], max_size=length, axis=1)
 
     
     # add strongest autocorrelation frequency to spec, helps with weak or missing fundamental
     if viterbi:
-        acorr_f0 = _get_viterbi_track(acorr1, min_hz_bin=min_hz_bin, max_hz_bin=max_hz_bin, penalty=.5, subsample=4)
-    
+        acorr_f0 = _get_viterbi_track(acorr1, min_hz_bin=min_hz_bin, max_hz_bin=max_hz_bin, penalty=1, subsample=4)
     else:
         acorr_f0 = np.argmax(acorr1[:, min_hz_bin:max_hz_bin], axis=1)+min_hz_bin    
     
@@ -472,10 +473,11 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     # get final pitch track
     if viterbi:
         track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=2)
+        
         track[unvoiced_frames]= 0
         #ax[5].plot(track, color="red") #, linestyle="dotted")
-        pic, track = _process_outliers(pic,track.astype('float'), mode="shift")
-        track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=1)
+        #pic, track = _process_outliers(pic,track.astype('float'), mode="shift")
+        #track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=1)
         track = track.astype('float')
     else:
         track =_get_max_track(pic, unvoiced_frames, min_hz, max_hz).astype('float')
@@ -496,6 +498,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     # fill unvoiced gaps and postprocess 
     if outlier_removal:
         track = _remove_outliers(track, mode="remove")
+
     unvoiced_frames[track==0] = True
     interp_track = _trim_voice_boundaries(track, 1)
     interp_track = _interpolate_zeros(interp_track, method='akima')
