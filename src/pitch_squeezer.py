@@ -54,7 +54,7 @@ def f0_cwt(f0_interp, plot=False):
     reduced[4] = np.sum(scalogram[9*nv:], axis=0)
 
     if plot:
-        fig, ax = plt.subplots(6, 1, sharex=True, sharey=True)
+        fig, ax = plt.subplots(6, 1, sharex=True, sherey=True)
         plt.subplots_adjust(top = 1., bottom = 0, right = 1, left = 0, hspace = 0., wspace = 0)
         scales = ["phone", "syllable", "word", "phrase", "utterance"]
         for i in range(0, 5):
@@ -150,12 +150,12 @@ def _stack_f0(spec, voiced_frames, min_hz, max_hz):
     mag_mean= np.mean(max_vals[voiced_frames])
     mag_std= np.std(max_vals[voiced_frames])
     max_i[np.invert(voiced_frames)]=0
-    threshold = mag_mean-mag_std*0.5
+    threshold = mag_mean-mag_std*1.5
     for i in range(0, spec.shape[0]):
         cand = max_i[i]
         if cand > 2*min_hz:
-            if np.log(spec[i,int(cand/2)]) > threshold or spec[i, int(cand/2)] > spec[i, cand] * 0.2:
-                spec[i, int(cand/2)]+=spec[i, cand]
+            if np.log(spec[i,int(cand/2)]) > threshold or spec[i, int(cand/2)] > spec[i, cand] * 0.1:
+                spec[i, int(cand/2)]+=spec[i, cand]*0.5
     return spec
 
 
@@ -319,7 +319,7 @@ def _remove_bias(spec, max_hz=None, percentile = 5):
     threshold = np.percentile(e, percentile)
     indices = np.where(e <= threshold)
     bias_spectrum = np.mean(spec[indices, :max_hz], axis=1).flatten()
-    bias_spectrum = _smooth(bias_spectrum, 20)
+    #bias_spectrum = _smooth(bias_spectrum, 20)
     mean_val = np.mean(bias_spectrum)
     spec[:, :max_hz] -= bias_spectrum
     return spec
@@ -382,9 +382,9 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     SR = 4000.0          # sample rate should be high enough for spectral autocorrelation (3 harmonics form max_hz)
     INTERNAL_RATE = 100  # frames per second, 100 for speed, >=200 for accuracy
     BINS_PER_HZ = 1.     # determines the frequency resolution of the generated track, slows down rapidly if increased > 2
-    SPEC_SLOPE = 1.5     # adjusting slope steeper will emphasize lower harmonics
-    ACORR_WEIGHT = 1.5    #
-    VITERBI_PENALTY = 3*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
+    SPEC_SLOPE = 1.5    # adjusting slope steeper will emphasize lower harmonics
+    ACORR_WEIGHT = 2.    #
+    VITERBI_PENALTY = 1.*INTERNAL_RATE*0.01/BINS_PER_HZ  # larger values will provide smoother track but might cut through fast moving peaks
     MIN_VAL = 1.0e-6
     SOFT_WINDOW_STD = 1.5     # stds. determines how tightly the spectrum is filtered around running mean
     min_hz_bin = int(min_hz * BINS_PER_HZ)
@@ -392,9 +392,13 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     orig_sr = librosa.get_samplerate(utt_wav)
    
     outlier_removal=True
-
+    
     # read wav file, downsample to 4000Hz, highpass filter to get rid of hum, and normalize
     sig, orig_sr = librosa.load(utt_wav, sr=None)
+    if (len(sig) / orig_sr) > 300:
+        print("Warning: long file, "+utt_wav+", cannot use viterbi due to memory consumption.")
+        viterbi = False
+    
     orig_sig_len = len(sig) # needed for target frame rate conversion
     sig = librosa.resample(sig, orig_sr=orig_sr, target_sr=SR)
     
@@ -402,7 +406,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     sig = (sig-np.mean(sig)) / np.std(sig) 
    
     # dither
-    sig+=0.01*np.random.normal(size=len(sig))
+    sig+=0.001*np.random.normal(size=len(sig))
 
     #  stfts on the signal
     frame_shift = int(SR//INTERNAL_RATE)
@@ -412,7 +416,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     short_win_fft = abs(short_win_fft).T
 
     if plot:
-        fig, ax = plt.subplots(6, 1, sharex=True, sharey=True)
+        fig, ax = plt.subplots(6, 1, sharex=True, sharey=True, gridspec_kw={'height_ratios': [1,1,1,1,1,2]})
         plt.subplots_adjust(top = 1, bottom = 0, right = 1, left = 0, hspace = 0.1, wspace = 0)
         tmp_voicing_strength = np.sum(abs(short_win_fft2.T)[:,min_hz:max_hz], axis=1)
         unvoiced_frames = tmp_voicing_strength < voicing_thresh*1000
@@ -421,7 +425,8 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     # pic will be our time-frequency image that is manipulated by subsequent 
     # methods to make fundamental frequency stand out in the spectra
     pic = scipy.ndimage.gaussian_filter(ssq_fft,[0.5,1.*BINS_PER_HZ])
-    pic = _remove_bias(pic)
+    
+    #pic = _remove_bias(pic)
     pic[pic<MIN_VAL] = MIN_VAL
 
     if plot:
@@ -453,7 +458,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     
     if plot:
         _plt(pic, unvoiced_frames, max = max_hz_bin, ax=ax[2], title="+freq autocorrelation")
-       
+        #ax[2].plot(voicing_strength*100)
     
     # dampen higher frequencies to reduce octave jumps up
     pic = _add_slope(pic, min_hz=0, max_hz=max_hz_bin, steepness=SPEC_SLOPE)
@@ -475,7 +480,7 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
         track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=2)
         
         track[unvoiced_frames]= 0
-        #ax[5].plot(track, color="red") #, linestyle="dotted")
+       
         #pic, track = _process_outliers(pic,track.astype('float'), mode="shift")
         #track = _get_viterbi_track(pic, voiced_frames, min_hz_bin, max_hz_bin, VITERBI_PENALTY, subsample=1)
         track = track.astype('float')
@@ -490,9 +495,9 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     
     if plot:
         ax[5].imshow(np.log(pic[:,:max_hz_bin]).T, aspect="auto", origin="lower")
-        ax[5].plot(track, color="white") #, linestyle="dotted")
+        ax[5].plot(track, color="white",linestyle="dotted",label="squeezer")
         ax[5].set_title("+viterbi", loc="left",x=0.02, y=0., color="white")
-        plt.show()
+        #plt.show()
 
  
     # fill unvoiced gaps and postprocess 
@@ -514,6 +519,8 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
     track[unvoiced_frames] = 0 
 
     if plot:
+        #
+        """
         plt.figure(figsize=(12,4))
         if frame_rate == INTERNAL_RATE:
             ssq_fft = scipy.ndimage.gaussian_filter(ssq_fft,[1,1*BINS_PER_HZ])
@@ -521,14 +528,15 @@ def track_pitch(utt_wav ,min_hz=60,max_hz=500, voicing_thresh=0.5,frame_rate=100
         plt.plot(interp_track, linestyle="dotted", color="white",alpha=0.5)
         plot_track = np.array(track)
         plot_track[track==0] = np.nan
-
+        """
         y, sr = librosa.load(utt_wav, sr=None)
-        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/frame_rate))
+        f0_pyin, voiced_flag, voiced_probs = librosa.pyin(y,sr=sr, fmin=min_hz, fmax=max_hz, hop_length = int(sr/INTERNAL_RATE))
         ax[5].plot(f0_pyin*BINS_PER_HZ, color="red", label="pyin",linestyle="dotted")
         ax[5].legend()
-        plt.plot(plot_track, color="white", label="squeezer")#,linestyle="dotted")
+
+        #plt.plot(plot_track, color="white", label="squeezer")#,linestyle="dotted")
         #plt.plot(voicing_strength*50, color="yellow",label="voicing_strength")
-        plt.legend()
+        #plt.legend()
         plt.show()
 
     return (track/BINS_PER_HZ, interp_track/BINS_PER_HZ)
@@ -589,7 +597,7 @@ def main():
                         help="minimum f0 value of the data, around 50-80 for males, 100 -150 for females")
     parser.add_argument("-M", "--max_hz", default=500, type=int,
                         help="maximum f0 value of the data, around 200-300 for males, 300-500 for females")
-    parser.add_argument("-t", "--voicing_thresh", default=0.2, type=float,
+    parser.add_argument("-t", "--voicing_thresh", default=0.4, type=float,
                         help="maximum f0 value of the data, around 200-300 for males, 300-500 for females")
     parser.add_argument("-r", "--frame_rate", default=100.0, type=float,
                         help="number of f0 values per second, (for many TTSs such as fastpitch 22050hz, this is 86.1326 (256 samples)")                 
