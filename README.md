@@ -21,7 +21,7 @@ pip install pitchsqueezer
 Examples of basic usage:
 ```
 ;; Command line, extract f0 for all wavs in a directory using 10 ms frame shift, save as numpy files
-$ pitch_squeezer path/to/wavs/ -r 100 -f npy
+$ pitchsqueezer path/to/wavs/ -r 100 -f npy
 
 ;; API
 import pitch_squeezer as ps
