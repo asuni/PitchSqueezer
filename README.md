@@ -15,11 +15,7 @@ Features:
 
 Installation: 
 ```
-soon: pip install pitchsqueezer
-```
-Meanwhile, download the repository, and in the directory where pyproject.toml resides, do
-```
-pip install .
+pip install pitchsqueezer
 ```
 
 Examples of basic usage:
