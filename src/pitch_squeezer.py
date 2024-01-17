@@ -98,7 +98,11 @@ def _interpolate_zeros(params, method='pchip', min_val = 0):
 
     voiced = np.array(params, float)
     voiced[voiced==min_val] = np.nan
-
+    if np.isnan(voiced).all():
+        return params
+    if not np.isnan(voiced).any():
+        return params
+    
     if np.isnan(voiced[-1]):
         voiced[-1] = np.nanmin(voiced)
     if np.isnan(voiced[0]):
@@ -164,6 +168,8 @@ def _apply_varying_window(spec, unvoiced_frames, win_mul = 1.5, min_hz=50, max_h
     pitch = _get_max_track(spec, unvoiced_frames, min_hz, max_hz).astype('float')
     pitch = _trim_voice_boundaries(pitch, 2)
     pitch[pitch==0] = np.nan
+    if np.isnan(pitch).all():
+        return spec
     pitch = scipy.signal.medfilt(pitch,5)
     std = np.nanstd(pitch)
     pitch = _interpolate_zeros(pitch, 'linear')
